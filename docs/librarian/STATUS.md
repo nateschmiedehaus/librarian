@@ -2,7 +2,7 @@
 
 Status: authoritative
 Scope: Implementation tracking with verification depth and evidence links.
-Last Verified: 2026-01-24
+Last Verified: 2026-01-26
 Owner: librarianship
 Version: 1.3.0
 
@@ -26,12 +26,12 @@ Version: 1.3.0
 ## Evidence Link Format
 
 Evidence links use the following format:
-- **Code**: `packages/librarian/src/path/file.ts:functionName` or `packages/librarian/src/path/file.ts:L42-L56`
+- **Code**: `src/path/file.ts:functionName` or `src/path/file.ts:L42-L56`
 - **Test**: `test/path/file.test.ts:testName`
 - **Doc**: `docs/path/file.md#section`
 - **Audit**: `state/audits/path/artifact.json`
 
-**Note**: `src/librarian/**` is a compatibility shim that re-exports `@wave0/librarian`. Evidence links should point at `packages/librarian/src/**`.
+**Note**: Evidence links should point at `src/**` in the standalone Librarian repository. Wave0 shims live in the Wave0 repo. Legacy `packages/librarian/**` references are pending migration (unverified_by_trace(extraction_link_migration_pending)).
 
 ## Status Tracking
 
@@ -44,6 +44,7 @@ Evidence links use the following format:
 | Legacy research archive | code-reviewed | `docs/librarian/legacy/` | Preserved for reference |
 | System architecture | code-reviewed | `docs/librarian/SYSTEM_ARCHITECTURE.md` | Directory map + toolkit |
 | Pipeline wiring inventory | code-reviewed | `docs/librarian/PIPELINES_AND_WIRING.md` | Full integration map |
+| Repository extraction boundary | tested | `docs/librarian/GATES.json`, `scripts/check_librarian_extraction_prereqs.mjs` | Standalone repo cutover gated |
 
 ### Knowledge Layer
 
@@ -98,6 +99,7 @@ This requires live LLM providers and takes longer but produces comprehensive kno
 | Component | Depth | Evidence | Notes |
 |-----------|-------|----------|-------|
 | Query API | partial | `packages/librarian/src/api/query.ts` | Provider-gated |
+| Query evidence ledger events | partial | `src/api/query.ts:appendQueryEvidence`, `src/api/query.ts:appendStageEvidence`, `src/api/__tests__/query_trace_ledger.test.ts:records query lifecycle and stage evidence` | unverified_by_trace(vitest_missing): test runner not installed |
 | Context assembly | partial | `packages/librarian/src/api/context_assembly.ts` | Knowledge sources merged |
 | UC requirements | partial | `packages/librarian/src/api/query.ts:deriveUCRequirements` | Task-type mapping |
 | Method hints | partial | `packages/librarian/src/methods/method_guidance.ts` | Heuristic-only currently |

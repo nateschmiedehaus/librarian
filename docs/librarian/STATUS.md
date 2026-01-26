@@ -45,6 +45,7 @@ Evidence links use the following format:
 | System architecture | code-reviewed | `docs/librarian/SYSTEM_ARCHITECTURE.md` | Directory map + toolkit |
 | Pipeline wiring inventory | code-reviewed | `docs/librarian/PIPELINES_AND_WIRING.md` | Full integration map |
 | Repository extraction boundary | tested | `docs/librarian/GATES.json`, `scripts/check_librarian_extraction_prereqs.mjs` | Standalone repo cutover gated |
+| State persistence (watch, verification plans, execution traces) | tested | `src/state/watch_state.ts`, `src/state/verification_plans.ts`, `src/state/execution_traces.ts`, `src/integration/__tests__/file_watcher.test.ts:file_watcher`, `src/api/__tests__/librarian_memory.test.ts:stores and lists verification plans`, `src/api/__tests__/composition_evolution.test.ts:CompositionEvolutionEngine` | Storage-backed state for watch health and evolution tracking |
 
 ### Knowledge Layer
 

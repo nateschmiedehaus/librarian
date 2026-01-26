@@ -4,7 +4,47 @@ Status: authoritative
 Scope: Implementation tracking with verification depth and evidence links.
 Last Verified: 2026-01-26
 Owner: librarianship
-Version: 1.3.0
+Version: 1.4.0
+
+---
+
+## ⚠️ IMMEDIATE PRIORITIES (Session 2026-01-26)
+
+### BLOCKING: Test Failures
+```bash
+npm test -- --run
+```
+**Known failing test:**
+- `confidence_calibration_validation.test.ts` - ECE 0.183 vs expected < 0.15
+
+**Fix this FIRST before any other work.**
+
+### INVALID: Previous Phase 8 Work
+Work units WU-801-OLD through WU-806-OLD are **INVALID** because they used synthetic AI-generated repos. This is circular evaluation (model evaluating its own outputs).
+
+**Required action:** Redo Phase 8 with REAL external repos.
+
+### Current Phase: 8 (Machine-Verifiable Ground Truth)
+| WU ID | Name | Status |
+|-------|------|--------|
+| WU-FIX-CAL | Fix calibration test | **PENDING - DO FIRST** |
+| WU-801 | Clone 5 real external repos | pending |
+| WU-802 | AST fact extractor | blocked on WU-801 |
+| WU-803 | Auto-generate ground truth | blocked on WU-802 |
+| WU-804 | Citation verifier | blocked on WU-803 |
+| WU-805 | Consistency checker | blocked on WU-804 |
+
+### Next Phases
+- **Phase 9**: Agent Performance Evaluation (A/B testing workers WITH vs WITHOUT Librarian)
+- **Phase 10**: Scientific Self-Improvement Loop (AutoSD/RLVR-based)
+
+### Key Spec References
+- `docs/librarian/specs/track-eval-machine-verifiable.md` — AST-based ground truth
+- `docs/librarian/specs/track-eval-agent-performance.md` — Worker A/B testing with human-style prompts
+- `docs/librarian/specs/track-eval-scientific-loop.md` — Scientific debugging loop
+- `docs/librarian/specs/BLOCKER_RESOLUTION.md` — Fix any blockers
+
+---
 
 ## How to Use This File
 
@@ -47,11 +87,26 @@ Evidence links use the following format:
 | Repository extraction boundary | tested | `docs/librarian/GATES.json`, `scripts/check_librarian_extraction_prereqs.mjs` | Standalone repo cutover gated |
 | State persistence (watch, verification plans, execution traces) | tested | `src/state/watch_state.ts`, `src/state/verification_plans.ts`, `src/state/execution_traces.ts`, `src/integration/__tests__/file_watcher.test.ts:file_watcher`, `src/api/__tests__/librarian_memory.test.ts:stores and lists verification plans`, `src/api/__tests__/composition_evolution.test.ts:CompositionEvolutionEngine` | Storage-backed state for watch health and evolution tracking |
 
+### Core Pipeline
+
+| Component | Depth | Evidence | Notes |
+|-----------|-------|----------|-------|
+| Operator execution layer (Track A P1) | tested | `src/api/operator_interpreters.ts`, `src/api/technique_execution.ts:executeComposition`, `src/api/__tests__/operator_interpreters.test.ts:enforces sequence ordering`, `src/api/__tests__/technique_execution.test.ts:does not emit coverage gap events for implemented operators` | Non-no-op interpreters for flow/control operators with deterministic fallbacks |
+| E2E execution pipeline (Critical A) | tested | `src/api/execution_pipeline.ts:executeQueryPipeline`, `src/types.ts:ensureOutputEnvelope`, `src/state/execution_traces.ts:recordExecutionTrace`, `src/api/__tests__/execution_engine_e2e.test.ts:executes query -> plan -> composition deterministically without providers` | Query -> plan -> execute pipeline normalizes required output artifacts and records execution traces with evidence ledger stage/operator events |
+
 ### Knowledge Layer
 
 | Component | Depth | Evidence | Notes |
 |-----------|-------|----------|-------|
 | Understanding layer schema | code-reviewed | `docs/librarian/UNDERSTANDING_LAYER.md`, `docs/librarian/SCHEMAS.md` | Confidence formula documented |
+| Claim confidence boundary (Track D Q8) | tested | `src/epistemics/confidence_guards.ts`, `src/epistemics/evidence_ledger.ts:append`, `src/epistemics/__tests__/confidence_guards.test.ts:accepts valid claim evidence at the boundary` | Enforces ConfidenceValue at claim boundary |
+| Claim confidence surfaces (Track D Q6-Q7) | tested | `src/epistemics/types.ts:createClaim`, `src/epistemics/storage.ts:upsertClaim`, `src/api/zero_knowledge_bootstrap.ts:normalizeClaim`, `src/__tests__/no_raw_claim_confidence.test.ts:do not expose raw numeric confidence values` | Claim confidence stored as ConfidenceValue; heuristic numeric fields renamed to signalStrength |
+| Claim-outcome tracking (Track F C1) | tested | `src/epistemics/outcomes.ts:ClaimOutcomeTracker`, `src/state/outcomes.ts`, `src/epistemics/__tests__/outcome_tracking.test.ts:records claim and outcome with ledger linkage` | Append-only claim/outcome records + evidence ledger linkage |
+| Calibration curves (Track F C2) | tested | `src/epistemics/calibration.ts:computeCalibrationCurve`, `src/epistemics/outcomes.ts:computeCalibrationReport`, `src/epistemics/__tests__/calibration_curves.test.ts:computes bucket accuracy and ECE from samples` | Bucketed calibration curve + ECE/MCE from claim outcomes with stored reports |
+| Confidence adjustment (Track F C3) | tested | `src/epistemics/confidence.ts:adjustConfidenceValue`, `src/epistemics/outcomes.ts:adjustConfidence`, `src/epistemics/__tests__/confidence_adjustment.test.ts:adjusts confidence values using calibration curves` | Applies calibration curves to adjust confidence values with outcome tracking |
+| Knowledge object registry | tested | `src/knowledge/registry.ts`, `src/knowledge/__tests__/registry.test.ts:creates and retrieves objects by kind and id` | Canonical RepoFacts/Maps/Claims/Packs/Episodes/Outcomes registry with invalidation rules |
+| Construction template registry | tested | `src/knowledge/construction_templates.ts`, `src/knowledge/__tests__/construction_templates.test.ts:registers the canonical template set within budget` | Single entrypoint for template lookup and UC/intent selection with disclosures |
+| UC→template mapping | tested | `src/knowledge/uc_template_mapping.ts`, `src/__tests__/uc_template_mapping.test.ts:maps known UCs to canonical templates` | Domain-driven UC mapping to canonical construction templates |
 | Knowledge generator | partial | `packages/librarian/src/knowledge/generator.ts:generateForFunction`, `packages/librarian/src/knowledge/generator.ts:generateForModule` | LLM-backed, needs live verification |
 | Semantic extractors | tested | `packages/librarian/src/knowledge/extractors/semantics.ts`, `packages/librarian/src/knowledge/extractors/security_extractor.ts`, `packages/librarian/src/knowledge/extractors/evidence_collector.ts`, `scripts/audit_llm_mandate.mjs`, `packages/librarian/src/__tests__/llm_mandate.test.ts` | Semantic outputs carry LLM evidence; mandate audit enforced in Tier-0 |
 | Rationale extractor | tested | `packages/librarian/src/knowledge/extractors/rationale_extractor.ts:extractRationale`, `packages/librarian/src/__tests__/llm_mandate.test.ts` | `extractRationale` is forbidden (must use LLM); throws `unverified_by_trace(rationale_llm_required)` |
@@ -89,6 +144,7 @@ This requires live LLM providers and takes longer but produces comprehensive kno
 | Component | Depth | Evidence | Notes |
 |-----------|-------|----------|-------|
 | Bootstrap pipeline | live-verified | `packages/librarian/src/api/bootstrap.ts`, `state/audits/librarian/provider/` | Claude Sonnet 4.5 verified |
+| W1 bootstrap resumability checkpoints | tested | `src/api/bootstrap.ts:createBootstrapCheckpointWriter`, `src/api/__tests__/bootstrap_resumability.test.ts:persists progress checkpoints for resume` | Progress checkpoints persisted to support resume after partial runs |
 | Method pack preloading | partial | `packages/librarian/src/api/bootstrap.ts:preloadMethodPacks` | MF-01..MF-14 families |
 | AST indexer | partial | `packages/librarian/src/agents/ast_indexer.ts` | TypeScript parser active |
 | Index librarian | partial | `packages/librarian/src/agents/index_librarian.ts` | Multi-vector storage wired |
@@ -101,6 +157,9 @@ This requires live LLM providers and takes longer but produces comprehensive kno
 |-----------|-------|----------|-------|
 | Query API | partial | `packages/librarian/src/api/query.ts` | Provider-gated |
 | Query evidence ledger events | tested | `src/api/query.ts:appendQueryEvidence`, `src/api/query.ts:appendStageEvidence`, `src/api/__tests__/query_trace_ledger.test.ts:records query lifecycle and stage evidence` | Tier-0 evidence ledger wiring verified |
+| Query replay trace anchor | tested | `src/api/query.ts:queryLibrarian`, `src/epistemics/evidence_ledger.ts:resolveReplaySessionId`, `src/__tests__/trace_replay.test.ts:anchors traceId to evidence ledger sessions for replay queries` | traceId maps to evidence ledger session IDs |
+| Output envelope invariant | tested | `src/types.ts:ensureOutputEnvelope`, `src/__tests__/output_envelope_invariant.test.ts:fills missing envelope fields with disclosures` | Ensures constructionPlan/adequacy/verificationPlan always present or disclosed |
+| Semantic composition selector (P2) | tested | `src/api/composition_selector.ts:SemanticCompositionSelector.select`, `src/api/composition_keywords.ts`, `src/__tests__/semantic_composition_selector.test.ts:falls back to deterministic keyword matches when embeddings unavailable` | Semantic ranking with deterministic keyword fallback on embedding unavailability |
 | Context assembly | partial | `packages/librarian/src/api/context_assembly.ts` | Knowledge sources merged |
 | UC requirements | partial | `packages/librarian/src/api/query.ts:deriveUCRequirements` | Task-type mapping |
 | Method hints | partial | `packages/librarian/src/methods/method_guidance.ts` | Heuristic-only currently |
@@ -119,8 +178,10 @@ This requires live LLM providers and takes longer but produces comprehensive kno
 | Component | Depth | Evidence | Notes |
 |-----------|-------|----------|-------|
 | Event bus | partial | `packages/librarian/src/events.ts` | Typed event emission |
+| Event ledger bridge (W3 correlation) | tested | `src/epistemics/event_ledger_bridge.ts:enableEventLedgerBridge`, `src/api/query.ts:queryLibrarian`, `src/epistemics/__tests__/event_ledger_bridge.test.ts:records session IDs and flags multi-agent conflicts for the same task` | Event → ledger wiring with session IDs; conflict disclosures surfaced |
 | File watcher | tested | `packages/librarian/src/integration/file_watcher.ts`, `packages/librarian/src/integration/__tests__/file_watcher.test.ts` | Incremental updates with lazy cascade re-indexing |
 | Cascade re-indexing | tested | `packages/librarian/src/integration/file_watcher.ts:CascadeReindexQueue` | Background queue for dependent file updates (rate-limited, retry logic, max 50 dependents) |
+| Watch freshness disclosure (W2) | tested | `src/api/query.ts:buildWatchDisclosures`, `src/api/__tests__/watch_freshness_disclosure.test.ts:adds disclosures when watcher is unhealthy or stale` | Watch health/freshness disclosed when stale or unhealthy |
 | Wave0 integration | partial | `packages/librarian/src/integration/wave0_integration.ts` | Co-change edges |
 | Co-change computation | tested | `packages/librarian/src/graphs/temporal_graph.ts:buildTemporalGraph`, `packages/librarian/src/__tests__/co_change_signals.test.ts` | Computed at bootstrap via runRelationshipMapping phase |
 
@@ -130,8 +191,11 @@ This requires live LLM providers and takes longer but produces comprehensive kno
 |-----------|-------|----------|-------|
 | UC matrix (310 UCs) | code-reviewed | `docs/librarian/USE_CASE_MATRIX.md` | Docs-only evidence |
 | Method catalog (200+) | code-reviewed | `docs/librarian/USE_CASE_MATRIX.md` | Integrated with UCs |
+| Technique primitive confidence (Track D Q5) | tested | `src/api/technique_library.ts`, `src/strategic/techniques.ts`, `src/strategic/__tests__/technique_library_confidence.test.ts:avoids raw numeric confidence on technique primitives` | Defaults to absent for uncalibrated primitives |
+| Composition pattern catalog confidence (Track D Q5) | tested | `src/api/pattern_catalog.ts:createCompositionPattern`, `src/strategic/__tests__/pattern_catalog_confidence.test.ts:pattern catalog confidence` | Pattern catalog rejects raw numeric confidence |
 | UC-to-method mapping | code-reviewed | `docs/librarian/USE_CASE_MATRIX.md#appendix-c` | Cluster mapping |
 | Coverage audit checklist | tested | `packages/librarian/src/cli/commands/coverage.ts`, `state/audits/librarian/coverage/uc_method_scenario_matrix.json` | UCMethodScenarioMatrix.v1 with evidence tracking, --strict mode |
+| Tier-2 scenario families SF-01..SF-30 | partial | `src/__tests__/scenario_families.system.test.ts:Tier‑2 Scenario Families (SF‑01…SF‑30)` | unverified_by_trace(provider_required): system suite requires live providers + emits Adequacy/Trace/Performance artifacts under `state/audits/librarian/scenarios/` |
 
 ### Packaging & OSS
 
@@ -169,6 +233,12 @@ This requires live LLM providers and takes longer but produces comprehensive kno
 | Component | Depth | Evidence | Notes |
 |-----------|-------|----------|-------|
 | Evaluation metrics | tested | `packages/librarian/src/evaluation/harness.ts`, `packages/librarian/src/evaluation/__tests__/harness.test.ts` | 33 tests passing |
+| Eval runner | tested | `src/evaluation/runner.ts`, `src/evaluation/__tests__/runner.test.ts` | Loads eval corpus, runs retrieval/synthesis pipeline, compares runs |
+| Eval corpus CI runner | tested | `scripts/eval-corpus.ts`, `package.json:eval:ci`, `.github/workflows/eval.yml`, `eval-corpus/results.json` | CI eval corpus runner emits report JSON; lexical baseline retrieval with recall/precision metrics |
+| Eval runner retrieval metrics | tested | `src/evaluation/metrics.ts`, `src/evaluation/__tests__/metrics.test.ts` | Precision/recall@k, nDCG, MRR, MAP |
+| Eval runner synthesis metrics | tested | `src/evaluation/synthesis_metrics.ts`, `src/evaluation/hallucination.ts`, `src/evaluation/runner.ts:evaluateSynthesis`, `src/evaluation/__tests__/synthesis_metrics.test.ts:computes fact precision/recall and hallucination rate`, `src/evaluation/__tests__/hallucination.test.ts:detects exact must-not-claim matches` | Fact precision/recall, summary accuracy, structural/behavioral accuracy, grounding scaffold + heuristic hallucination scoring |
+| Citation accuracy scoring | tested | `src/evaluation/citation_accuracy.ts:computeCitationAccuracy`, `src/evaluation/runner.ts:evaluateSynthesis`, `src/evaluation/__tests__/citation_accuracy.test.ts:scores citations against evidence references`, `src/evaluation/__tests__/runner.test.ts:produces deterministic report structure` | Verifies citations resolve to ground-truth file/line references |
+| Quality dashboard | tested | `src/evaluation/dashboard.ts:buildQualityDashboard`, `src/evaluation/__tests__/dashboard.test.ts:builds summary counts and markdown` | JSON + markdown quality dashboard from evaluation reports |
 | Precision/Recall@k | tested | `packages/librarian/src/evaluation/harness.ts:evaluateQuery` | Binary and graded |
 | nDCG calculation | tested | `packages/librarian/src/evaluation/harness.ts:calculateNDCG` | Discounted cumulative gain |
 | MAP calculation | tested | `packages/librarian/src/evaluation/harness.ts:calculateMAP` | Mean average precision |
@@ -176,6 +246,17 @@ This requires live LLM providers and takes longer but produces comprehensive kno
 | Batch evaluation | tested | `packages/librarian/src/evaluation/harness.ts:runBatch` | Warmup + evaluation |
 | Quality grading | tested | `packages/librarian/src/evaluation/harness.ts:generateSummary` | A/B/C/D/F grades |
 | Aggregate statistics | tested | `packages/librarian/src/evaluation/harness.ts:aggregateMetrics` | Mean, median, std, percentiles |
+
+### Evaluation Corpus
+
+| Component | Depth | Evidence | Notes |
+|-----------|-------|----------|-------|
+| Eval corpus scaffold | tested | `eval-corpus/README.md`, `eval-corpus/schema/ground_truth.schema.json`, `src/__tests__/eval_corpus_structure.test.ts` | Schema includes evidence refs/links; total QA pairs >= 200 |
+| Small TypeScript ground truth | tested | `eval-corpus/repos/small-typescript/.librarian-eval/ground-truth.json`, `eval-corpus/repos/small-typescript/.librarian-eval/annotations/architecture.md`, `src/__tests__/eval_corpus_structure.test.ts` | 97 QA pairs with evidence refs; annotations completed |
+| Medium Python ground truth | tested | `eval-corpus/repos/medium-python/.librarian-eval/ground-truth.json`, `eval-corpus/repos/medium-python/.librarian-eval/annotations/architecture.md`, `src/__tests__/eval_corpus_structure.test.ts` | 37 QA pairs with evidence refs; annotations added |
+| Medium Mixed ground truth | tested | `eval-corpus/repos/medium-mixed/.librarian-eval/ground-truth.json`, `eval-corpus/repos/medium-mixed/.librarian-eval/annotations/architecture.md`, `src/__tests__/eval_corpus_structure.test.ts` | 28 QA pairs with evidence refs; annotations added |
+| Large Monorepo ground truth | tested | `eval-corpus/repos/large-monorepo/.librarian-eval/ground-truth.json`, `src/__tests__/eval_corpus_structure.test.ts` | 21 QA pairs with evidence refs; sparse annotations |
+| Adversarial ground truth | tested | `eval-corpus/repos/adversarial/.librarian-eval/ground-truth.json`, `eval-corpus/repos/adversarial/.librarian-eval/annotations/architecture.md`, `eval-corpus/repos/adversarial/.librarian-eval/annotations/adversarial-traps.md`, `src/__tests__/eval_corpus_structure.test.ts` | 17 QA pairs with evidence refs; adversarial annotations added |
 
 ### Retrieval System (Enhanced)
 

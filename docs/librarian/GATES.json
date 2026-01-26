@@ -1,7 +1,7 @@
 {
   "$schema": "./gates.schema.json",
   "version": "2.1.0",
-  "lastUpdated": "2026-01-26T20:20:00Z",
+  "lastUpdated": "2026-01-26T13:09:20Z",
   "updatedBy": "codex",
   "description": "Machine-readable gate status with tiered testing architecture (see specs/core/testing-architecture.md)",
 
@@ -28,9 +28,11 @@
       "name": "Tier-0 Tests (Deterministic)",
       "layer": 0,
       "command": "LIBRARIAN_TEST_MODE=unit npm test -- --run",
-      "status": "pass",
+      "status": "failing",
       "lastRun": "2026-01-26",
-      "evidence": "Unit run: 170 test files (166 passed, 4 skipped); 2314 tests (2243 passed, 71 skipped)",
+      "evidence": "confidence_calibration_validation.test.ts failing: ECE 0.183 > threshold 0.15",
+      "blocking": true,
+      "requiredFix": "WU-FIX-CAL: Fix calibration test before any other work",
       "spec": "specs/core/testing-architecture.md",
       "dependsOn": ["layer0.build"]
     },
@@ -176,15 +178,39 @@
     "layer3.Q2": { "name": "Derivation Rules", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1"] },
     "layer3.Q3": { "name": "Degradation Handlers", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1"] },
     "layer3.Q4": { "name": "Migration Script", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q1", "layer3.Q2", "layer3.Q3"] },
-    "layer3.Q5": { "name": "Migrate claim confidence surfaces", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q4"] },
-    "layer3.Q6": { "name": "Rename heuristic confidence fields", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q5"] },
-    "layer3.Q7": { "name": "Reduce legacy placeholder usage", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q5"] },
+    "layer3.Q5": {
+      "name": "Migrate claim confidence surfaces",
+      "layer": 3,
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "Claim confidence now stored as ConfidenceValue with signalStrength for heuristics; no_raw_claim_confidence.test.ts enforces numeric ban",
+      "verified": false,
+      "dependsOn": ["layer3.Q4"]
+    },
+    "layer3.Q6": {
+      "name": "Rename heuristic confidence fields",
+      "layer": 3,
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "Claim heuristic values renamed to signalStrength (epistemics types/storage/defeaters, zero-knowledge bootstrap)",
+      "verified": false,
+      "dependsOn": ["layer3.Q5"]
+    },
+    "layer3.Q7": {
+      "name": "Reduce legacy placeholder usage",
+      "layer": 3,
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "Claim constructors default to absent('uncalibrated'); numeric claim confidence literals removed",
+      "verified": false,
+      "dependsOn": ["layer3.Q5"]
+    },
     "layer3.Q8": {
       "name": "TypeScript enforcement (claim boundary)",
       "layer": 3,
-      "status": "partial",
-      "lastRun": "2026-01-24",
-      "evidence": "Claim-confidence boundary guidance exists; enforcement is still incomplete and not yet automated as a hard lint gate",
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "Claim boundary asserts ConfidenceValue for claim entries; confidence_guards.test.ts enforces runtime rejection of raw numeric confidence",
       "verified": false,
       "dependsOn": ["layer3.Q1"]
     },
@@ -194,9 +220,33 @@
     "layer3.D3": { "name": "Domain Construction Protocol", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D2"] },
     "layer3.D4": { "name": "Aspect Decomposer", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D3"] },
 
-    "layer3.C1": { "name": "Claim-Outcome Tracking", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q2"] },
-    "layer3.C2": { "name": "Calibration Curves", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.C1"] },
-    "layer3.C3": { "name": "Confidence Adjustment", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.C2"] },
+    "layer3.C1": {
+      "name": "Claim-Outcome Tracking",
+      "layer": 3,
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "ClaimOutcomeTracker records claim/outcome state + evidence ledger entries; outcome_tracking.test.ts passing",
+      "verified": false,
+      "dependsOn": ["layer3.Q2"]
+    },
+    "layer3.C2": {
+      "name": "Calibration Curves",
+      "layer": 3,
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "calibration_curves.test.ts passing; computeCalibrationCurve + computeCalibrationReport verified with ECE/MCE samples",
+      "verified": false,
+      "dependsOn": ["layer3.C1"]
+    },
+    "layer3.C3": {
+      "name": "Confidence Adjustment",
+      "layer": 3,
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "confidence_adjustment.test.ts passing; adjustConfidenceValue applies calibration curves",
+      "verified": false,
+      "dependsOn": ["layer3.C2"]
+    },
     "layer3.C4": { "name": "Calibration Dashboard", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.C2"] },
 
     "layer4.verification": {
@@ -218,21 +268,110 @@
     },
 
     "layer5.evalCorpus": {
-      "name": "Ground Truth Evaluation Corpus",
+      "name": "Ground Truth Evaluation Corpus (Machine-Verifiable)",
+      "layer": 5,
+      "status": "invalid",
+      "target": "5+ EXTERNAL repos (not AI-generated), AST-extracted facts, citation verification",
+      "spec": "specs/track-eval-machine-verifiable.md",
+      "dependsOn": ["layer4.verification"],
+      "note": "CRITICAL: Current synthetic repos are INVALID - circular evaluation. Must use real external repos.",
+      "blocking": true,
+      "currentState": "synthetic repos only (invalid)",
+      "requiredFix": "Clone real GitHub repos post-2024, extract facts via AST, do NOT use AI-generated repos"
+    },
+    "layer5.externalRepos": {
+      "name": "External Real Repos",
       "layer": 5,
       "status": "not_started",
-      "target": "10 repos, 200+ query/answer pairs, adversarial cases",
-      "spec": "specs/track-eval-infrastructure.md#e1",
+      "target": "5+ real GitHub repos (not AI-generated, post-2024 or obscure)",
+      "spec": "specs/track-eval-machine-verifiable.md",
       "dependsOn": ["layer4.verification"],
-      "note": "Required for any quality measurement"
+      "blocking": true
+    },
+    "layer5.astFactExtractor": {
+      "name": "AST Fact Extractor",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Extract function defs, imports, call graphs, types from any codebase",
+      "spec": "specs/track-eval-machine-verifiable.md",
+      "dependsOn": ["layer5.externalRepos"]
+    },
+    "layer5.citationVerifier": {
+      "name": "Citation Verifier",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Verify all file/line/identifier citations in Librarian responses",
+      "spec": "specs/track-eval-machine-verifiable.md",
+      "dependsOn": ["layer5.astFactExtractor"]
+    },
+    "layer5.consistencyChecker": {
+      "name": "Multi-Query Consistency Checker",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Detect contradictions across query variants",
+      "spec": "specs/track-eval-machine-verifiable.md",
+      "dependsOn": ["layer5.citationVerifier"]
+    },
+    "layer5.agentHarness": {
+      "name": "Agent Performance Test Harness",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Spawn worker pairs, record events, measure lift",
+      "spec": "specs/track-eval-agent-performance.md",
+      "dependsOn": ["layer5.consistencyChecker"]
+    },
+    "layer5.taskBank": {
+      "name": "Task Bank (80 tasks across 4 repos)",
+      "layer": 5,
+      "status": "not_started",
+      "target": "20 tasks per repo × 4 repos, T1-T5 complexity",
+      "spec": "specs/track-eval-agent-performance.md",
+      "dependsOn": ["layer5.externalRepos"]
+    },
+    "layer5.contextLevels": {
+      "name": "Context Level System",
+      "layer": 5,
+      "status": "not_started",
+      "target": "6 context levels (cold start → full context)",
+      "spec": "specs/track-eval-agent-performance.md",
+      "dependsOn": ["layer5.agentHarness"]
+    },
+    "layer5.abExperiments": {
+      "name": "A/B Experiment Runner",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Control vs Treatment worker comparison",
+      "spec": "specs/track-eval-agent-performance.md",
+      "dependsOn": ["layer5.contextLevels", "layer5.taskBank"]
+    },
+    "layer5.successRateLift": {
+      "name": "Success Rate Lift (T3+)",
+      "layer": 5,
+      "status": "not_measured",
+      "target": "> 25% improvement on moderate+ tasks",
+      "blocking": true,
+      "spec": "specs/track-eval-agent-performance.md",
+      "dependsOn": ["layer5.abExperiments"]
+    },
+    "layer5.timeReduction": {
+      "name": "Time Reduction",
+      "layer": 5,
+      "status": "not_measured",
+      "target": "> 30% faster completion",
+      "blocking": false,
+      "spec": "specs/track-eval-agent-performance.md",
+      "dependsOn": ["layer5.abExperiments"]
     },
     "layer5.evalHarness": {
       "name": "Automated Evaluation Harness",
       "layer": 5,
-      "status": "not_started",
+      "status": "implemented",
+      "lastRun": "2026-01-26",
+      "evidence": "eval:ci script runs eval-corpus with lexical baseline and writes eval-corpus/results.json; GitHub workflow eval.yml runs on push/PR",
       "target": "Nightly eval with regression detection",
       "spec": "specs/track-eval-infrastructure.md#e2",
-      "dependsOn": ["layer5.evalCorpus"]
+      "dependsOn": ["layer5.abExperiments"],
+      "note": "Regression detection and nightly schedule still pending"
     },
     "layer5.retrievalRecall": {
       "name": "Retrieval Recall@5",
@@ -310,6 +449,41 @@
       "target": "Worst within 25% of best",
       "spec": "specs/track-eval-infrastructure.md#e4",
       "dependsOn": ["layer5.codebaseProfiler"]
+    },
+
+    "layer5.scientificLoop": {
+      "name": "Scientific Self-Improvement Loop",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Automated detect → hypothesize → test → fix → verify cycle",
+      "spec": "specs/track-eval-scientific-loop.md",
+      "dependsOn": ["layer5.abExperiments"],
+      "note": "Based on AutoSD, RLVR, SWE-agent research"
+    },
+    "layer5.rlvrVerifier": {
+      "name": "RLVR-Style Fix Verification",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Binary reward: pass only if all tests pass + no regressions",
+      "spec": "specs/track-eval-scientific-loop.md",
+      "dependsOn": ["layer5.scientificLoop"]
+    },
+    "layer5.benchmarkEvolver": {
+      "name": "Benchmark Self-Evolver",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Auto-generate prevention tests after each fix",
+      "spec": "specs/track-eval-scientific-loop.md",
+      "dependsOn": ["layer5.rlvrVerifier"]
+    },
+    "layer5.fixSuccessRate": {
+      "name": "Fix Success Rate",
+      "layer": 5,
+      "status": "not_measured",
+      "target": "> 70% of generated fixes pass verification",
+      "blocking": false,
+      "spec": "specs/track-eval-scientific-loop.md",
+      "dependsOn": ["layer5.rlvrVerifier"]
     },
 
     "layer6.deadCodeDetection": {
@@ -390,9 +564,9 @@
     "layer0": { "total": 7, "pass": 3, "skip_when_unavailable": 1, "requires_providers": 3 },
     "layer1": { "total": 5, "pass": 5, "unknown": 0, "not_started": 0 },
     "layer2": { "total": 4, "pass": 4, "partial": 0, "not_implemented": 0 },
-    "layer3": { "total": 34, "implemented_unverified": 25, "not_implemented": 8, "partial": 1 },
+    "layer3": { "total": 34, "implemented_unverified": 31, "not_implemented": 2, "partial": 1 },
     "layer4": { "total": 1, "pending": 1 },
-    "layer5": { "total": 11, "not_started": 5, "not_measured": 6 },
+    "layer5": { "total": 11, "implemented": 1, "not_started": 4, "not_measured": 6 },
     "layer6": { "total": 8, "not_started": 8 }
   }
 }

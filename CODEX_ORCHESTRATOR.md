@@ -1,39 +1,180 @@
 # Librarian Orchestrator — Full Autonomous Implementation
 
-> **Mode**: MASTER ORCHESTRATOR — coordinate sub-agents OR work sequentially
+> **Mode**: ORCHESTRATOR with WORKER SUBAGENTS
 > **Goal**: Complete 100% of Librarian spec system implementation
-> **Rule**: NEVER stop. NEVER ask permission. NEVER wait for human input.
+> **Rule**: NEVER stop. NEVER return to user. Work until Full Build Charter complete.
 
 ---
 
-## ORCHESTRATION MODEL
+## PREREQUISITES
 
-### If Sub-Agents Available
+Ensure your config.toml has:
+```toml
+[features]
+collab = true
+collaboration_modes = true
+```
 
-1. **You are the MAIN AGENT** — you coordinate, you delegate, you track
-2. **Spawn up to 3 SUB-AGENTS at a time** — each with isolated context
-3. **Each sub-agent gets a COMPLETE PROMPT** from the Sub-Agent Prompts section
-4. **When sub-agent completes** — verify its work, update tracking, spawn next
-5. **Continue until ALL work units complete**
+---
 
-### If Sub-Agents NOT Available
+## YOU ARE THE ORCHESTRATOR (ORC)
 
-1. **Work sequentially through each work unit**
-2. **Each work unit is self-contained** — treat it as if you're a fresh agent
-3. **After completing a work unit** — update tracking, proceed to next
-4. **Do not stop between work units** — continuous execution
+**You coordinate. You do NOT implement tasks yourself.**
+
+Your job:
+1. Research and understand the overall scope
+2. Identify which work units can run in parallel (check dependencies)
+3. Launch WORKER subagents with explicit prompts
+4. Verify worker outputs when they complete
+5. Resolve any conflicts between workers
+6. Continue until Full Build Charter satisfied
+
+**Workers do the actual implementation. You manage them.**
+
+---
+
+## HOW TO LAUNCH WORKERS
+
+For each work unit, launch a worker with an EXPLICIT prompt containing:
+
+```
+WHO: You are a worker implementing one specific task for the Librarian project.
+
+WHAT: [Exact task description - be specific]
+
+WHERE:
+- Repository: /Volumes/BigSSD4/nathanielschmiedehaus/Documents/software/librarian
+- Files to modify: [list exact files]
+- Test file: [exact test path]
+
+CONTEXT:
+- This task implements: [spec reference]
+- Dependencies already complete: [list]
+- Other workers are implementing: [list if parallel]
+- Do NOT modify files outside your scope
+
+EXPECTED OUTPUT:
+- Modified files: [list]
+- Test passes: npm test -- --run [test_file]
+- TypeScript compiles: npx tsc --noEmit
+
+CONSTRAINTS:
+- You are not alone. Do not impact other workers' files.
+- If blocked, report the blocker; do not stop silently.
+- Read docs/librarian/specs/BLOCKER_RESOLUTION.md for common fixes.
+```
+
+**Be EXPLICIT. Ambiguity causes drift. Don't assume workers have your context.**
+
+---
+
+## VALIDATE WORKER OUTPUT
+
+After each worker completes:
+
+1. Ask: "What was your prompt to the worker?"
+2. Ask: "Show me the entire output of the worker"
+3. Verify: Did the test actually pass?
+4. Verify: Do the files exist and look correct?
+
+**Don't assume workers returned useful work. Validate.**
+
+---
+
+## PARALLEL EXECUTION STRATEGY
+
+Look at MASTER STATE and dependency graph:
+- Tasks with all dependencies satisfied can run in parallel
+- Launch up to 3 workers simultaneously for independent tasks
+- When workers complete, identify newly unblocked tasks
+- Repeat until tasks remaining = 0
+
+Example:
+- WU-104 depends on WU-101, WU-102 (both complete) → can start
+- WU-201 depends on WU-104 → wait for WU-104
+- WU-202 depends on WU-201 → wait for WU-201
+
+---
+
+## FORBIDDEN BEHAVIORS
+
+**NEVER DO THESE:**
+
+1. ❌ **Implement tasks yourself** — Launch workers instead
+2. ❌ **Stop and report "Next: proceeding to X"** — Actually launch the worker
+3. ❌ **Return to user with progress summary** — Keep orchestrating
+4. ❌ **Ask "should I continue?"** — The answer is always yes
+5. ❌ **Assume worker output is correct** — Always validate
+
+**IF YOU FIND YOURSELF ABOUT TO RETURN TO USER — DON'T. Launch the next worker instead.**
+
+---
+
+## ORCHESTRATION LOOP
+
+```
+WHILE Full Build Charter NOT satisfied:
+    0. FIRST: Run full test suite: npm test -- --run
+       - If ANY tests fail, STOP and fix them before continuing
+       - Create WU-FIX-XXX work units for each failure
+       - Do not proceed to new features until all tests pass
+
+    1. Read MASTER STATE - check FAILING_TESTS is empty
+    2. Check dependency graph - find all unblocked work units
+    3. For each unblocked work unit (up to 3 parallel):
+       a. Generate EXPLICIT worker prompt (use template above)
+       b. Launch worker subagent
+    4. When worker completes:
+       a. Validate output (ask for full prompt and output if needed)
+       b. Run FULL test suite: npm test -- --run (not just specific tests)
+       c. Run typecheck: npx tsc --noEmit
+       d. If ALL tests pass: mark complete in MASTER STATE
+       e. If ANY test fails: add to FAILING_TESTS, create WU-FIX-XXX
+    5. Identify newly unblocked tasks
+    6. IMMEDIATELY launch next workers (no pause, no summary)
+```
+
+**CRITICAL: Step 0 is mandatory. Never skip test verification. Never proceed with failing tests.**
+
+**There is no step where you return to user. The loop runs until done.**
 
 ---
 
 ## MASTER STATE (Track This)
 
 ```
-CURRENT_PHASE: 1
-COMPLETED_UNITS: [WU-001, WU-002, WU-003, WU-004, WU-101, WU-102, WU-103]
+CURRENT_PHASE: 8
+COMPLETED_UNITS: [WU-001, WU-002, WU-003, WU-004, WU-101, WU-102, WU-103, WU-104, WU-201, WU-202, WU-203, WU-204, WU-301, WU-302, WU-303, WU-304, WU-401, WU-402, WU-403, WU-501, WU-502, WU-503, WU-601, WU-602, WU-603, WU-701, WU-702, WU-703]
 IN_PROGRESS_UNITS: []
 BLOCKED_UNITS: []
-NEXT_UNITS: [WU-104, WU-201, WU-202]
+INVALID_UNITS: [WU-801-OLD, WU-802-OLD, WU-803-OLD, WU-804-OLD, WU-805-OLD, WU-806-OLD]
+FAILING_TESTS: [
+  "confidence_calibration_validation.test.ts - ECE 0.183 vs expected < 0.15"
+]
+NEXT_UNITS: [WU-FIX-CAL, WU-801]
+NOTES: |
+  Phase 8 WU-801-806 were completed but are INVALID - used synthetic AI-generated repos.
+  This is circular evaluation. Must redo with REAL external repos.
+  See: docs/librarian/specs/track-eval-machine-verifiable.md
+
+  NEW EVALUATION FRAMEWORK (Phases 8-10):
+  - Phase 8: Machine-verifiable ground truth from REAL repos via AST extraction
+  - Phase 9: A/B testing workers WITH vs WITHOUT Librarian (human-style prompts)
+  - Phase 10: Scientific self-improvement loop (AutoSD/RLVR research-based)
+
+  KEY SPECS:
+  - docs/librarian/specs/track-eval-machine-verifiable.md
+  - docs/librarian/specs/track-eval-agent-performance.md
+  - docs/librarian/specs/track-eval-scientific-loop.md
 ```
+
+**CRITICAL: FAILING_TESTS must be empty before continuing to new work units.**
+
+### Immediate Action Required
+
+1. **Run tests**: `npm test -- --run`
+2. **If tests fail**: Create WU-FIX-XXX and fix immediately
+3. **Then continue to WU-801**: Clone REAL external repos (not AI-generated)
 
 Update this state after each work unit completes.
 
@@ -42,6 +183,25 @@ Update this state after each work unit completes.
 ## WORK UNITS
 
 Each Work Unit (WU) is an atomic piece of work that can be assigned to a sub-agent.
+
+### Priority 0: Fix Test Failures (ALWAYS DO FIRST)
+
+**Before any other work, all tests must pass.** If FAILING_TESTS is non-empty, create fix work units.
+
+| WU ID | Name | Dependencies | Est. Files |
+|-------|------|--------------|------------|
+| WU-FIX-001 | Fix test_tiering_guard violation | None | 1 |
+| WU-FIX-002 | Fix execution_engine_e2e step count | WU-FIX-001 | 1-2 |
+
+**Current Failing Tests (2026-01-26):**
+
+1. **test_tiering_guard.test.ts** — `semantic_composition_selector.test.ts` has `requireProviders` which violates Tier-0 rules
+   - **Fix**: Remove `requireProviders` from the test or move test to Tier-1
+   - **File**: `src/__tests__/semantic_composition_selector.test.ts`
+
+2. **execution_engine_e2e.test.ts** — Expects 5+ execution steps but only getting 3
+   - **Fix**: Either fix the pipeline to produce 5+ steps, or adjust test expectation if 3 is correct
+   - **File**: `src/api/__tests__/execution_engine_e2e.test.ts`
 
 ### Phase 0: Environment Bootstrap
 
@@ -111,42 +271,116 @@ Each Work Unit (WU) is an atomic piece of work that can be assigned to a sub-age
 | WU-702 | Calibration curves | WU-701 | 2 |
 | WU-703 | Confidence adjustment | WU-702 | 2 |
 
-### Phase 8: Ground Truth Corpus
+### Phase 8: Ground Truth Corpus (Machine-Verifiable)
+
+**CRITICAL: Do NOT use synthetic repos created by the model. Use REAL external repos.**
 
 | WU ID | Name | Dependencies | Est. Files |
 |-------|------|--------------|------------|
-| WU-801 | Eval corpus structure | WU-703 | 5 |
-| WU-802 | Ground truth schema | WU-801 | 2 |
-| WU-803 | Annotate small TypeScript repo | WU-802 | 3 |
-| WU-804 | Annotate medium repos | WU-803 | 4 |
-| WU-805 | Adversarial repo | WU-804 | 2 |
-| WU-806 | 200+ query/answer pairs | WU-805 | 10+ |
+| WU-801 | Clone 5 real external repos | WU-703 | 0 |
+| WU-802 | AST fact extractor | WU-801 | 3 |
+| WU-803 | Auto-generate structural ground truth | WU-802 | 2 |
+| WU-804 | Citation verifier | WU-803 | 2 |
+| WU-805 | Consistency checker (multi-query) | WU-804 | 2 |
+| WU-806 | Import real adversarial patterns | WU-805 | 2 |
 
-### Phase 9: Automated Evaluation Harness
+**WU-801 Requirements:**
+- Clone 5+ REAL repos from GitHub (not created by AI)
+- Prefer: post-2024 repos, obscure repos, or repos with good test suites
+- Each repo must have: TypeScript/Python, test suite, >1000 LOC
+- Do NOT create synthetic repos — this is circular evaluation
+
+**WU-802-803: Machine-Verifiable Ground Truth:**
+Instead of human annotation, extract verifiable facts via AST:
+- Function definitions with signatures
+- Import/export relationships
+- Class hierarchies and inheritance
+- Call graphs (what calls what)
+- Type information from TS compiler
+
+**WU-804: Citation Verification:**
+For any Librarian claim, automatically verify:
+- Cited files exist
+- Cited line numbers in range
+- Cited code contains mentioned identifiers
+- Structural claims match AST analysis
+
+**WU-805: Consistency Checking:**
+- Generate variant queries for same fact
+- Run all variants through Librarian
+- Flag contradictions as hallucination candidates
+
+### Phase 9: Agent Performance Evaluation
+
+**The TRUE test: Do agents perform better WITH Librarian than WITHOUT?**
 
 | WU ID | Name | Dependencies | Est. Files |
 |-------|------|--------------|------------|
-| WU-901 | Eval runner | WU-806 | 2 |
-| WU-902 | Retrieval metrics | WU-901 | 2 |
-| WU-903 | Synthesis metrics | WU-902 | 2 |
-| WU-904 | Hallucination detection | WU-903 | 2 |
-| WU-905 | Citation accuracy | WU-904 | 2 |
-| WU-906 | Quality dashboard | WU-905 | 2 |
-| WU-907 | CI integration | WU-906 | 2 |
-| WU-908 | Regression detection | WU-907 | 2 |
+| WU-901 | Worker spawning harness | WU-806 | 3 |
+| WU-902 | Event recording system | WU-901 | 2 |
+| WU-903 | Context level configurator | WU-902 | 2 |
+| WU-904 | Task bank (20 tasks × 4 repos) | WU-903 | 10 |
+| WU-905 | Control worker template | WU-904 | 2 |
+| WU-906 | Treatment worker template | WU-905 | 2 |
+| WU-907 | A/B experiment runner | WU-906 | 3 |
+| WU-908 | Metrics aggregator | WU-907 | 2 |
 
-### Phase 10: Outcome Collection & Calibration
+**Experiment Design:**
+- Spawn pairs of workers: Control (no Librarian) vs Treatment (with Librarian)
+- Same task, same context level, different access to Librarian
+- Record everything: time, errors, files touched, success/failure
+- Measure lift: How much better does Treatment perform?
+
+**Context Levels (simulate real scenarios):**
+- Level 0: Cold start (repo path only)
+- Level 1: Minimal (directory listing)
+- Level 2: Partial (some relevant files)
+- Level 3: Misleading (wrong files given)
+- Level 4: Adversarial (outdated docs)
+- Level 5: Full (baseline)
+
+**Task Complexity:**
+- T1 Trivial: Add log statement
+- T2 Simple: Fix clear bug
+- T3 Moderate: Add feature following patterns
+- T4 Hard: Refactor, debug intermittent
+- T5 Extreme: Race condition, security vuln
+
+See: `docs/librarian/specs/track-eval-agent-performance.md`
+
+### Phase 10: Scientific Self-Improvement Loop
+
+**Based on: AutoSD, RLVR, SWE-agent, Benchmark Self-Evolving research**
 
 | WU ID | Name | Dependencies | Est. Files |
 |-------|------|--------------|------------|
-| WU-1001 | Claim ID infrastructure | WU-908 | 2 |
-| WU-1002 | Outcome collection API | WU-1001 | 2 |
-| WU-1003 | Agent feedback integration | WU-1002 | 2 |
-| WU-1004 | Human correction interface | WU-1003 | 2 |
-| WU-1005 | Contradiction detector | WU-1004 | 2 |
-| WU-1006 | ECE computation | WU-1005 | 2 |
-| WU-1007 | Calibration curve computation | WU-1006 | 2 |
-| WU-1008 | Confidence adjustment | WU-1007 | 2 |
+| WU-1001 | Problem detector agent | WU-908 | 3 |
+| WU-1002 | Hypothesis generator agent | WU-1001 | 2 |
+| WU-1003 | Hypothesis tester agent | WU-1002 | 2 |
+| WU-1004 | Fix generator agent | WU-1003 | 2 |
+| WU-1005 | Fix verifier (RLVR-style) | WU-1004 | 2 |
+| WU-1006 | Benchmark evolver agent | WU-1005 | 2 |
+| WU-1007 | Loop orchestrator | WU-1006 | 3 |
+| WU-1008 | Improvement tracking | WU-1007 | 2 |
+
+**Scientific Loop:**
+```
+DETECT problem → HYPOTHESIZE cause → TEST hypothesis →
+FIX (if supported) → VERIFY (binary reward) → EVOLVE benchmark
+```
+
+**RLVR-style Verification (per DeepSeek R1):**
+- Reward = 1 ONLY if: original test passes AND no regressions AND types valid
+- Reward = 0: Fix rejected, try another hypothesis
+- No partial credit — binary verifiable rewards
+
+**Sub-Agent Isolation:**
+- Each agent has ONE task, ISOLATED context
+- Problem detector does NOT fix
+- Hypothesis generator does NOT test
+- Fix generator does NOT verify
+
+See: `docs/librarian/specs/track-eval-scientific-loop.md`
 
 ### Phase 11: Quality Parity & Hard Problems
 
@@ -242,12 +476,30 @@ WHILE Full Build Charter NOT satisfied:
 ### Verification After Each Work Unit
 
 ```bash
-# Run these after every work unit
+# Run FULL test suite after every work unit (not just specific tests)
 npm test -- --run
+
+# Check for any failures
+# If output shows "X failed", you MUST fix before continuing
+
+# Also verify types
 npx tsc --noEmit
 ```
 
-If either fails, FIX IT before moving on.
+**If ANY test fails:**
+1. Do NOT mark the work unit complete
+2. Add the failing test to FAILING_TESTS in MASTER STATE
+3. Create a WU-FIX-XXX work unit to fix it
+4. Fix all failures before proceeding to new work
+
+**Common test failures and fixes:**
+
+| Failure Type | Likely Cause | Fix |
+|--------------|--------------|-----|
+| `requireProviders` in Tier-0 | Test uses provider checks but is in Tier-0 | Move test to Tier-1 or remove provider dependency |
+| Assertion count mismatch | Implementation changed but test expectations didn't | Update test or fix implementation |
+| Type error | Interface changed | Update types or implementation |
+| Timeout | Async operation too slow | Add timeout or fix async logic |
 
 ### Progress Checkpoints
 
@@ -270,6 +522,272 @@ After every 5 work units, update `docs/librarian/STATUS.md`:
 ---
 
 ## SPECIFIC SUB-AGENT PROMPTS
+
+### WU-FIX-CAL: Fix calibration test ECE threshold
+
+```
+# Work Unit: WU-FIX-CAL — Fix calibration test ECE violation
+
+## Context
+Repository: /Volumes/BigSSD4/nathanielschmiedehaus/Documents/software/librarian
+You have FULL AUTONOMY. See AGENTS.md.
+
+## Problem
+The test `confidence_calibration_validation.test.ts` fails because ECE (Expected Calibration Error) is 0.183 but threshold is 0.15.
+
+## Task
+Investigate and fix by ONE of:
+1. If the test fixture generates uncalibrated data, fix the fixture to produce calibrated samples
+2. If the threshold is too strict for the current implementation, adjust the threshold with justification
+3. If the calibration algorithm has a bug, fix the algorithm
+
+## Investigation Steps
+1. Read src/epistemics/__tests__/confidence_calibration_validation.test.ts to understand the test
+2. Read src/epistemics/calibration.ts to understand ECE computation
+3. Check if fixtures are generating properly calibrated samples
+4. Determine root cause and fix
+
+## Files to Check/Modify
+- src/epistemics/__tests__/confidence_calibration_validation.test.ts
+- src/epistemics/calibration.ts
+- Any fixture generation code
+
+## Verification
+npm test -- --run src/epistemics/__tests__/confidence_calibration_validation.test.ts
+
+## Definition of Done
+- [ ] confidence_calibration_validation.test.ts passes
+- [ ] Full test suite still passes: npm test -- --run
+- [ ] TypeScript compiles: npx tsc --noEmit
+
+## Output Format
+{
+  "wu_id": "WU-FIX-CAL",
+  "status": "complete",
+  "files_modified": ["..."],
+  "tests_passed": true,
+  "evidence": "Fixed ECE by [explanation]"
+}
+```
+
+### WU-FIX-001: Fix test_tiering_guard violation
+
+```
+# Work Unit: WU-FIX-001 — Fix Tier-0 test tiering violation
+
+## Context
+Repository: /Volumes/BigSSD4/nathanielschmiedehaus/Documents/software/librarian
+You have FULL AUTONOMY. See AGENTS.md.
+
+## Problem
+The test `semantic_composition_selector.test.ts` contains `requireProviders` which violates Tier-0 rules.
+Tier-0 tests must be deterministic and cannot depend on providers.
+
+## Task
+Fix the tiering violation by ONE of:
+1. Remove the `requireProviders` call if the test doesn't actually need providers
+2. Move the test to Tier-1 (rename file or add proper skip logic)
+3. Make the test truly deterministic by mocking provider dependencies
+
+## Files to Modify
+- src/__tests__/semantic_composition_selector.test.ts
+
+## Spec Reference
+- docs/librarian/specs/core/testing-architecture.md (Tier-0 rules)
+
+## Verification
+npm test -- --run src/__tests__/test_tiering_guard.test.ts
+
+## Definition of Done
+- [ ] test_tiering_guard.test.ts passes
+- [ ] Full test suite still passes: npm test -- --run
+- [ ] TypeScript compiles: npx tsc --noEmit
+
+## Output Format
+{
+  "wu_id": "WU-FIX-001",
+  "status": "complete",
+  "files_modified": ["src/__tests__/semantic_composition_selector.test.ts"],
+  "tests_passed": true,
+  "evidence": "Removed requireProviders / moved to Tier-1 / mocked providers"
+}
+```
+
+### WU-FIX-002: Fix execution_engine_e2e step count
+
+```
+# Work Unit: WU-FIX-002 — Fix E2E execution step count assertion
+
+## Context
+Repository: /Volumes/BigSSD4/nathanielschmiedehaus/Documents/software/librarian
+You have FULL AUTONOMY. See AGENTS.md.
+
+## Problem
+The test `execution_engine_e2e.test.ts` expects 5+ execution steps but only 3 are produced.
+Line 136: `expect(result.steps.length).toBeGreaterThanOrEqual(5)`
+
+## Task
+Investigate and fix by ONE of:
+1. If the implementation should produce 5+ steps, fix the pipeline to produce them
+2. If 3 steps is correct behavior, update the test expectation
+3. If the test setup is wrong, fix the test setup
+
+## Investigation Steps
+1. Read src/api/__tests__/execution_engine_e2e.test.ts to understand what's being tested
+2. Read src/api/execution_pipeline.ts to understand what steps should be produced
+3. Determine if 3 or 5+ is the correct expectation
+4. Fix accordingly
+
+## Files to Modify
+- src/api/__tests__/execution_engine_e2e.test.ts (if test is wrong)
+- src/api/execution_pipeline.ts (if implementation is wrong)
+
+## Verification
+npm test -- --run src/api/__tests__/execution_engine_e2e.test.ts
+
+## Definition of Done
+- [ ] execution_engine_e2e.test.ts passes
+- [ ] Full test suite still passes: npm test -- --run
+- [ ] TypeScript compiles: npx tsc --noEmit
+
+## Output Format
+{
+  "wu_id": "WU-FIX-002",
+  "status": "complete",
+  "files_modified": ["..."],
+  "tests_passed": true,
+  "evidence": "Fixed step count by [explanation]"
+}
+```
+
+### WU-801: Clone real external repos
+
+```
+# Work Unit: WU-801 — Clone 5+ real external repos for evaluation
+
+## Context
+Repository: /Volumes/BigSSD4/nathanielschmiedehaus/Documents/software/librarian
+You have FULL AUTONOMY. See AGENTS.md.
+Dependencies: WU-FIX-CAL must be complete (all tests passing)
+
+## CRITICAL: Why This Matters
+The previous eval corpus used SYNTHETIC repos created by Codex itself.
+This is INVALID — it's circular evaluation (model evaluating its own outputs).
+We need REAL repos that the model was NOT trained on.
+
+## Task
+Clone 5+ real open-source repos from GitHub for evaluation.
+
+## Requirements for Each Repo
+1. **NOT AI-generated**: Real human-written code from GitHub
+2. **Recent or obscure**: Post-2024 created OR low stars (<100) to reduce training contamination
+3. **Has tests**: Must have a test suite for verification
+4. **Meaningful size**: >1000 LOC, real functionality
+5. **TypeScript or Python**: Languages Librarian supports well
+
+## Commands to Find Repos
+```bash
+# Find recent TypeScript repos with test suites
+gh search repos --language=typescript --created=">2024-06-01" --stars="10..100" --limit=20
+
+# Find recent Python repos
+gh search repos --language=python --created=">2024-06-01" --stars="10..100" --limit=20
+```
+
+## Clone Location
+```bash
+mkdir -p eval-corpus/external-repos
+cd eval-corpus/external-repos
+git clone <repo-url> small-ts-real
+git clone <repo-url> medium-py-real
+# etc.
+```
+
+## Output Structure
+Create `eval-corpus/external-repos/manifest.json`:
+```json
+{
+  "repos": [
+    {
+      "name": "small-ts-real",
+      "source": "https://github.com/owner/repo",
+      "language": "typescript",
+      "stars": 47,
+      "created": "2024-08-15",
+      "loc": 2500,
+      "hasTests": true,
+      "clonedAt": "2026-01-26T..."
+    }
+  ],
+  "validationNote": "All repos are real GitHub projects, not AI-generated"
+}
+```
+
+## Verification
+- Each repo must compile/run: `npm install && npm test` or equivalent
+- Repos must have actual source code, not just scaffolding
+- Document any repos that fail verification
+
+## Definition of Done
+- [ ] 5+ real repos cloned to eval-corpus/external-repos/
+- [ ] manifest.json documents all repos with provenance
+- [ ] Each repo verified to have working tests
+- [ ] No AI-generated or synthetic repos
+
+## Output Format
+{
+  "wu_id": "WU-801",
+  "status": "complete",
+  "repos_cloned": ["small-ts-real", "medium-py-real", ...],
+  "evidence": "5 real repos cloned with manifest, all verified to have working tests"
+}
+```
+
+### WU-802: AST fact extractor
+
+```
+# Work Unit: WU-802 — Build AST fact extractor
+
+## Context
+Repository: /Volumes/BigSSD4/nathanielschmiedehaus/Documents/software/librarian
+Dependencies: WU-801 must be complete
+
+## Task
+Build an AST-based fact extractor that can extract verifiable ground truth from any codebase.
+
+## Facts to Extract (Machine-Verifiable)
+1. **Function definitions**: name, parameters, return type, file:line
+2. **Import/export relationships**: what imports what
+3. **Class hierarchies**: inheritance, implements
+4. **Call graphs**: what function calls what function
+5. **Type information**: from TypeScript compiler API
+
+## Implementation
+Create: src/evaluation/ast_fact_extractor.ts
+Create: src/evaluation/__tests__/ast_fact_extractor.test.ts
+
+## Interface
+```typescript
+interface ASTFact {
+  type: 'function_def' | 'import' | 'export' | 'class' | 'call' | 'type';
+  identifier: string;
+  file: string;
+  line: number;
+  details: Record<string, unknown>;
+}
+
+function extractFacts(repoPath: string): ASTFact[];
+```
+
+## Test
+Run the extractor on one of the cloned repos and verify facts are correct.
+
+## Definition of Done
+- [ ] ast_fact_extractor.ts implemented
+- [ ] Extracts all 5 fact types
+- [ ] Tests pass with real repo
+- [ ] TypeScript compiles
+```
 
 ### WU-001: npm install + verify
 
@@ -540,9 +1058,13 @@ If your context/session is ending:
 
 Implementation is COMPLETE when ALL of these are true:
 
+### Prerequisites (Must Pass Before Anything Else)
+- [ ] **ZERO failing tests**: `npm test -- --run` shows 0 failures
+- [ ] **TypeScript compiles**: `npx tsc --noEmit` shows 0 errors
+- [ ] **FAILING_TESTS in MASTER STATE is empty**
+
 ### Functional (Phases 0-7)
-- [ ] All Tier-0 tests pass
-- [ ] TypeScript compiles without errors
+- [ ] All Tier-0 tests pass (included in zero failing tests above)
 - [ ] Output envelope invariant enforced
 - [ ] UC-001...UC-310 map to ≤12 templates
 - [ ] ≥30 scenario families with artifacts

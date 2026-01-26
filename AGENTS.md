@@ -5,6 +5,59 @@
 
 ---
 
+## ⚠️ CURRENT SESSION PRIORITY (2026-01-26)
+
+**READ THIS FIRST. Execute in order:**
+
+### Step 1: Fix Failing Tests (BLOCKING)
+```bash
+npm test -- --run
+```
+If any tests fail, fix them BEFORE doing anything else. Known issue:
+- `confidence_calibration_validation.test.ts` - ECE 0.183 > expected 0.15
+
+### Step 2: Phase 8 — Machine-Verifiable Ground Truth
+The old Phase 8 work units (WU-801-806) are **INVALID** — they used synthetic AI-generated repos (circular evaluation).
+
+**NEW Phase 8 requirements:**
+- Clone 5+ REAL repos from GitHub (not AI-generated, post-2024 or obscure)
+- Build AST fact extractor (function defs, imports, call graphs)
+- Auto-generate ground truth from AST (no human annotation)
+- Citation verifier (verify file/line/identifier claims)
+- Consistency checker (same question, different phrasing → same answer)
+
+See: `docs/librarian/specs/track-eval-machine-verifiable.md`
+
+### Step 3: Phase 9 — Agent Performance Evaluation
+**The TRUE test: Do agents perform better WITH Librarian than WITHOUT?**
+
+Design:
+- Spawn worker pairs: Control (no Librarian) vs Treatment (with Librarian)
+- Context levels 0-5 (cold start → full context)
+- Task complexity T1-T5 (trivial → extreme)
+- **Librarian awareness levels L0-L4** (no mention → full docs)
+- **Human-style prompts**: "Users get logged out randomly" NOT "Fix SessionManager.refresh()"
+
+Success criteria:
+- >25% success rate lift on T3+ tasks
+- L0 Treatment (no Librarian mention) still beats Control
+
+See: `docs/librarian/specs/track-eval-agent-performance.md`
+
+### Step 4: Phase 10 — Scientific Self-Improvement Loop
+Based on AutoSD, RLVR (DeepSeek R1), SWE-agent research.
+
+Loop: DETECT → HYPOTHESIZE → TEST → FIX → VERIFY → EVOLVE
+
+**RLVR-style verification:**
+- Reward = 1 ONLY if: original test passes AND no regressions AND types valid
+- Reward = 0: Fix rejected, try another hypothesis
+- No partial credit — binary verifiable rewards
+
+See: `docs/librarian/specs/track-eval-scientific-loop.md`
+
+---
+
 ## CRITICAL: Orchestration Mode
 
 **See `CODEX_ORCHESTRATOR.md` for the full implementation orchestration system.**
@@ -51,6 +104,28 @@ If you encounter a blocker:
 - Document the fix
 - Continue to the next task
 - Only stop when Full Build Charter is satisfied
+
+### CRITICAL: Test Failures Are Priority Zero
+
+**Before doing ANY new work, all tests must pass.**
+
+```bash
+# Run this FIRST at start of every session
+npm test -- --run
+
+# If ANY tests fail:
+# 1. STOP all other work
+# 2. Fix the failing tests IMMEDIATELY
+# 3. Only proceed to new work when all tests pass
+```
+
+**Test failures are not "blockers to work around" — they are the FIRST thing to fix.**
+
+Common test failure patterns:
+- `requireProviders` in Tier-0 test → Move test to Tier-1 or remove provider dependency
+- Assertion mismatch → Fix implementation or update test expectation
+- Type error → Fix types
+- Timeout → Fix async logic or increase timeout
 
 ### Explicitly Permitted Operations
 

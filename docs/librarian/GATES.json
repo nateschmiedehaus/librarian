@@ -1,7 +1,7 @@
 {
   "$schema": "./gates.schema.json",
   "version": "2.1.0",
-  "lastUpdated": "2026-01-25T00:00:00Z",
+  "lastUpdated": "2026-01-26T00:00:00Z",
   "updatedBy": "codex",
   "description": "Machine-readable gate status with tiered testing architecture (see specs/core/testing-architecture.md)",
 
@@ -9,7 +9,7 @@
     "layer0.typecheck": {
       "name": "Package Typecheck",
       "layer": 0,
-      "command": "cd packages/librarian && npx tsc --noEmit",
+      "command": "npx tsc --noEmit",
       "status": "pass",
       "lastRun": "2026-01-22",
       "evidence": "Typecheck passes",
@@ -27,7 +27,7 @@
     "layer0.tier0": {
       "name": "Tier-0 Tests (Deterministic)",
       "layer": 0,
-      "command": "LIBRARIAN_TEST_MODE=unit npm --prefix packages/librarian test -- --run",
+      "command": "LIBRARIAN_TEST_MODE=unit npm test -- --run",
       "status": "pass",
       "lastRun": "2026-01-25",
       "evidence": "Unit run: 176 test files (172 passed, 4 skipped); 2420 tests (2320 passed, 100 skipped)",
@@ -37,7 +37,7 @@
     "layer0.tier1": {
       "name": "Tier-1 Tests (Integration)",
       "layer": 0,
-      "command": "LIBRARIAN_TEST_MODE=integration npm --prefix packages/librarian test -- --run",
+      "command": "LIBRARIAN_TEST_MODE=integration npm test -- --run",
       "status": "skip_when_unavailable",
       "lastRun": "2026-01-24",
       "evidence": "Skips gracefully when providers unavailable",
@@ -47,7 +47,7 @@
     "layer0.tier2": {
       "name": "Tier-2 Tests (System)",
       "layer": 0,
-      "command": "LIBRARIAN_TEST_MODE=system npm --prefix packages/librarian test -- --run src/__tests__/mvp_librarian.system.test.ts",
+      "command": "LIBRARIAN_TEST_MODE=system npm test -- --run src/__tests__/mvp_librarian.system.test.ts",
       "status": "requires_providers",
       "lastRun": null,
       "evidence": null,
@@ -58,7 +58,7 @@
     "layer0.tier2.useCaseFoundation30": {
       "name": "Tier-2 Use-Case Foundation (UC-001…UC-030)",
       "layer": 0,
-      "command": "LIBRARIAN_TEST_MODE=system npm --prefix packages/librarian test -- --run src/__tests__/use_case_foundation_30.system.test.ts",
+      "command": "LIBRARIAN_TEST_MODE=system npm test -- --run src/__tests__/use_case_foundation_30.system.test.ts",
       "status": "requires_providers",
       "lastRun": null,
       "evidence": null,
@@ -69,7 +69,7 @@
     "layer0.tier2.useCaseFixtureSuite": {
       "name": "Tier-2 Use-Case Fixture Grounding Suite",
       "layer": 0,
-      "command": "LIBRARIAN_TEST_MODE=system npm --prefix packages/librarian test -- --run src/__tests__/use_case_suite.system.test.ts",
+      "command": "LIBRARIAN_TEST_MODE=system npm test -- --run src/__tests__/use_case_suite.system.test.ts",
       "status": "requires_providers",
       "lastRun": null,
       "evidence": null,
@@ -81,7 +81,7 @@
     "layer1.noWave0Imports": {
       "name": "No Wave0 Imports",
       "layer": 1,
-      "command": "rg \"src/(wave0|orchestrator)/\" packages/librarian/src || echo PASS",
+      "command": "rg \"src/(wave0|orchestrator)/\" src || echo PASS",
       "status": "pass",
       "lastRun": "2026-01-22",
       "evidence": "No wave0/orchestrator references in package",
@@ -90,7 +90,7 @@
     "layer1.noDirectImports": {
       "name": "No Direct Librarian Imports",
       "layer": 1,
-      "command": "rg \"from '\\.\\./librarian/\" src --glob '!src/librarian/**' || echo PASS",
+      "command": "rg \"from '\\.\\./librarian/\" src || echo PASS",
       "status": "pass",
       "lastRun": "2026-01-22",
       "evidence": "No direct imports outside shim",
@@ -99,7 +99,7 @@
     "layer1.standaloneTests": {
       "name": "Package Tests Standalone",
       "layer": 1,
-      "command": "cd packages/librarian && LIBRARIAN_TEST_MODE=unit npm test -- --run",
+      "command": "LIBRARIAN_TEST_MODE=unit npm test -- --run",
       "status": "pass",
       "lastRun": "2026-01-25",
       "evidence": "Standalone package unit run passed (invoked via deterministic --run mode)",
@@ -110,15 +110,15 @@
       "layer": 1,
       "command": "node scripts/check_librarian_extraction_prereqs.mjs --root .",
       "status": "pass",
-      "lastRun": "2026-01-25",
-      "evidence": "Prereq check passes (package metadata + no Wave0-internal imports in package sources)",
+      "lastRun": "2026-01-26",
+      "evidence": "Standalone prereq check passes (package metadata + no Wave0-internal imports in package sources)",
       "dependsOn": ["layer1.standaloneTests"]
     },
 
     "layer2.llmAdapter": {
       "name": "LLM Adapter Complete",
       "layer": 2,
-      "command": "rg \"new LLMService\\(\" packages/librarian/src --glob '!**/adapters/**' --glob '!**/__tests__/**' || echo PASS",
+      "command": "rg \"new LLMService\\(\" src --glob '!**/adapters/**' --glob '!**/__tests__/**' || echo PASS",
       "status": "pass",
       "lastRun": "2026-01-24",
       "evidence": "rg check: no LLMService instantiations outside adapters/tests",
@@ -127,7 +127,7 @@
     "layer2.evidenceLedger": {
       "name": "Evidence Ledger Unified",
       "layer": 2,
-      "command": "cd packages/librarian && npx vitest run src/mcp/__tests__/audit.test.ts src/mcp/__tests__/tool_adapter_bridge.test.ts",
+      "command": "npx vitest run src/mcp/__tests__/audit.test.ts src/mcp/__tests__/tool_adapter_bridge.test.ts",
       "status": "partial",
       "lastRun": "2026-01-24",
       "evidence": "MCP audit logger appends tool_call entries to SqliteEvidenceLedger; MCP server tool calls also emit tool_call evidence (provider/query pipeline wiring still incomplete)",
@@ -136,7 +136,7 @@
     "layer2.capabilityNegotiation": {
       "name": "Capability Negotiation",
       "layer": 2,
-      "command": "cd packages/librarian && npx vitest run src/__tests__/capability_contracts.test.ts",
+      "command": "npx vitest run src/__tests__/capability_contracts.test.ts",
       "status": "pass",
       "lastRun": "2026-01-24",
       "evidence": "capability_contracts.test.ts passing (Tier-0 deterministic)",
@@ -145,7 +145,7 @@
     "layer2.toolAdapter": {
       "name": "Tool/MCP Adapter",
       "layer": 2,
-      "command": "cd packages/librarian && npx vitest run src/mcp/__tests__/tool_adapter_bridge.test.ts",
+      "command": "npx vitest run src/mcp/__tests__/tool_adapter_bridge.test.ts",
       "status": "pass",
       "lastRun": "2026-01-24",
       "evidence": "tool_adapter_bridge.test.ts passing: MCP server callTool records tool calls to workspace evidence ledger",
@@ -209,8 +209,10 @@
     "layer1.repoExtraction": {
       "name": "Repository Extraction (Standalone Repo Cutover)",
       "layer": 1,
-      "status": "not_started",
-      "currentState": "packages/librarian within wave0-autopilot",
+      "status": "pass",
+      "lastRun": "2026-01-26",
+      "evidence": "Standalone repo exists; Wave0 dependency points to external librarian repo; extraction prereqs + no-direct-import checks pass.",
+      "currentState": "standalone repository",
       "targetState": "standalone repository",
       "dependsOn": ["layer1.standaloneTests"]
     }
@@ -218,7 +220,7 @@
 
   "summary": {
     "layer0": { "total": 7, "pass": 3, "skip_when_unavailable": 1, "requires_providers": 3 },
-    "layer1": { "total": 5, "pass": 4, "unknown": 0, "not_started": 1 },
+    "layer1": { "total": 5, "pass": 5, "unknown": 0, "not_started": 0 },
     "layer2": { "total": 4, "pass": 3, "partial": 1, "not_implemented": 0 },
     "layer3": { "total": 34, "implemented_unverified": 25, "not_implemented": 8, "partial": 1 },
     "layer4": { "total": 1, "pending": 1 },

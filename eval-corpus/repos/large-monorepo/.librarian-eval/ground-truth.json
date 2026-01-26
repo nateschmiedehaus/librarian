@@ -1,0 +1,783 @@
+{
+  "version": "0.1.0",
+  "repoId": "large-monorepo",
+  "queries": [
+    {
+      "queryId": "lm-symbol-add-seconds",
+      "repoId": "large-monorepo",
+      "intent": "Where is addSeconds defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "addSeconds is defined in src/libs/shared/clock.ts.",
+        "mustIncludeFiles": [
+          "src/libs/shared/clock.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "addSeconds is defined in src/libs/shared/clock.ts."
+        ],
+        "mustNotClaim": [
+          "addSeconds is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/libs/shared/clock.ts contains the addSeconds definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "add-seconds-def",
+            "kind": "file",
+            "label": "addSeconds definition",
+            "path": "src/libs/shared/clock.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 9
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-average",
+      "repoId": "large-monorepo",
+      "intent": "Where is average defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "average is defined in src/apps/dashboard/metrics.ts.",
+        "mustIncludeFiles": [
+          "src/apps/dashboard/metrics.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "average is defined in src/apps/dashboard/metrics.ts."
+        ],
+        "mustNotClaim": [
+          "average is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/apps/dashboard/metrics.ts contains the average definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "average-def",
+            "kind": "file",
+            "label": "average definition",
+            "path": "src/apps/dashboard/metrics.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-batch-size",
+      "repoId": "large-monorepo",
+      "intent": "Where is BATCH_SIZE defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "BATCH_SIZE is defined in src/services/ingest/config.py.",
+        "mustIncludeFiles": [
+          "src/services/ingest/config.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "BATCH_SIZE is defined in src/services/ingest/config.py."
+        ],
+        "mustNotClaim": [
+          "BATCH_SIZE is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/ingest/config.py contains the BATCH_SIZE definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "batch-size-def",
+            "kind": "file",
+            "label": "BATCH_SIZE definition",
+            "path": "src/services/ingest/config.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 4
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-build-batches",
+      "repoId": "large-monorepo",
+      "intent": "Where is build_batches defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "build_batches is defined in src/services/ingest/pipeline.py.",
+        "mustIncludeFiles": [
+          "src/services/ingest/pipeline.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "build_batches is defined in src/services/ingest/pipeline.py."
+        ],
+        "mustNotClaim": [
+          "build_batches is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/ingest/pipeline.py contains the build_batches definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "build-batches-def",
+            "kind": "file",
+            "label": "build_batches definition",
+            "path": "src/services/ingest/pipeline.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 24
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-build-notice",
+      "repoId": "large-monorepo",
+      "intent": "Where is buildNotice defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "buildNotice is defined in src/services/notify/templates.ts.",
+        "mustIncludeFiles": [
+          "src/services/notify/templates.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "buildNotice is defined in src/services/notify/templates.ts."
+        ],
+        "mustNotClaim": [
+          "buildNotice is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/notify/templates.ts contains the buildNotice definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "build-notice-def",
+            "kind": "file",
+            "label": "buildNotice definition",
+            "path": "src/services/notify/templates.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 10
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-core-config",
+      "repoId": "large-monorepo",
+      "intent": "Where is coreConfig defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "coreConfig is defined in src/core/config.ts.",
+        "mustIncludeFiles": [
+          "src/core/config.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "coreConfig is defined in src/core/config.ts."
+        ],
+        "mustNotClaim": [
+          "coreConfig is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/core/config.ts contains the coreConfig definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "core-config-def",
+            "kind": "file",
+            "label": "coreConfig definition",
+            "path": "src/core/config.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 6
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-find-job",
+      "repoId": "large-monorepo",
+      "intent": "Where is findJob defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "findJob is defined in src/platform/storage/index.ts.",
+        "mustIncludeFiles": [
+          "src/platform/storage/index.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "findJob is defined in src/platform/storage/index.ts."
+        ],
+        "mustNotClaim": [
+          "findJob is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/platform/storage/index.ts contains the findJob definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "find-job-def",
+            "kind": "file",
+            "label": "findJob definition",
+            "path": "src/platform/storage/index.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 15
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-get-job",
+      "repoId": "large-monorepo",
+      "intent": "Where is getJob defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "getJob is defined in src/core/registry.ts.",
+        "mustIncludeFiles": [
+          "src/core/registry.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "getJob is defined in src/core/registry.ts."
+        ],
+        "mustNotClaim": [
+          "getJob is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/core/registry.ts contains the getJob definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "get-job-def",
+            "kind": "file",
+            "label": "getJob definition",
+            "path": "src/core/registry.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 16
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-get-store",
+      "repoId": "large-monorepo",
+      "intent": "Where is getStore defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "getStore is defined in src/platform/storage/memory.ts.",
+        "mustIncludeFiles": [
+          "src/platform/storage/memory.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "getStore is defined in src/platform/storage/memory.ts."
+        ],
+        "mustNotClaim": [
+          "getStore is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/platform/storage/memory.ts contains the getStore definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "get-store-def",
+            "kind": "file",
+            "label": "getStore definition",
+            "path": "src/platform/storage/memory.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 16
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-job",
+      "repoId": "large-monorepo",
+      "intent": "Where is Job defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Job is defined in src/core/types.ts.",
+        "mustIncludeFiles": [
+          "src/core/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Job is defined in src/core/types.ts."
+        ],
+        "mustNotClaim": [
+          "Job is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/core/types.ts contains the Job definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "job-def",
+            "kind": "file",
+            "label": "Job definition",
+            "path": "src/core/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-job-result",
+      "repoId": "large-monorepo",
+      "intent": "Where is JobResult defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "JobResult is defined in src/core/types.ts.",
+        "mustIncludeFiles": [
+          "src/core/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "JobResult is defined in src/core/types.ts."
+        ],
+        "mustNotClaim": [
+          "JobResult is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/core/types.ts contains the JobResult definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "job-result-def",
+            "kind": "file",
+            "label": "JobResult definition",
+            "path": "src/core/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-list-jobs",
+      "repoId": "large-monorepo",
+      "intent": "Where is listJobs defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "listJobs is defined in src/core/registry.ts.",
+        "mustIncludeFiles": [
+          "src/core/registry.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "listJobs is defined in src/core/registry.ts."
+        ],
+        "mustNotClaim": [
+          "listJobs is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/core/registry.ts contains the listJobs definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "list-jobs-def",
+            "kind": "file",
+            "label": "listJobs definition",
+            "path": "src/core/registry.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 16
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-max-rows",
+      "repoId": "large-monorepo",
+      "intent": "Where is MAX_ROWS defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "MAX_ROWS is defined in src/services/ingest/config.py.",
+        "mustIncludeFiles": [
+          "src/services/ingest/config.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "MAX_ROWS is defined in src/services/ingest/config.py."
+        ],
+        "mustNotClaim": [
+          "MAX_ROWS is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/ingest/config.py contains the MAX_ROWS definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "max-rows-def",
+            "kind": "file",
+            "label": "MAX_ROWS definition",
+            "path": "src/services/ingest/config.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 4
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-memory-store",
+      "repoId": "large-monorepo",
+      "intent": "Where is MemoryStore defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "MemoryStore is defined in src/platform/storage/memory.ts.",
+        "mustIncludeFiles": [
+          "src/platform/storage/memory.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "MemoryStore is defined in src/platform/storage/memory.ts."
+        ],
+        "mustNotClaim": [
+          "MemoryStore is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/platform/storage/memory.ts contains the MemoryStore definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "memory-store-def",
+            "kind": "file",
+            "label": "MemoryStore definition",
+            "path": "src/platform/storage/memory.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 16
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-next-id",
+      "repoId": "large-monorepo",
+      "intent": "Where is nextId defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "nextId is defined in src/libs/shared/ids.ts.",
+        "mustIncludeFiles": [
+          "src/libs/shared/ids.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "nextId is defined in src/libs/shared/ids.ts."
+        ],
+        "mustNotClaim": [
+          "nextId is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/libs/shared/ids.ts contains the nextId definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "next-id-def",
+            "kind": "file",
+            "label": "nextId definition",
+            "path": "src/libs/shared/ids.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 7
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-notice",
+      "repoId": "large-monorepo",
+      "intent": "Where is Notice defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Notice is defined in src/services/notify/templates.ts.",
+        "mustIncludeFiles": [
+          "src/services/notify/templates.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Notice is defined in src/services/notify/templates.ts."
+        ],
+        "mustNotClaim": [
+          "Notice is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/notify/templates.ts contains the Notice definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "notice-def",
+            "kind": "file",
+            "label": "Notice definition",
+            "path": "src/services/notify/templates.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 10
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-now-iso",
+      "repoId": "large-monorepo",
+      "intent": "Where is nowIso defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "nowIso is defined in src/libs/shared/clock.ts.",
+        "mustIncludeFiles": [
+          "src/libs/shared/clock.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "nowIso is defined in src/libs/shared/clock.ts."
+        ],
+        "mustNotClaim": [
+          "nowIso is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/libs/shared/clock.ts contains the nowIso definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "now-iso-def",
+            "kind": "file",
+            "label": "nowIso definition",
+            "path": "src/libs/shared/clock.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 9
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-record",
+      "repoId": "large-monorepo",
+      "intent": "Where is record defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "record is defined in src/apps/dashboard/metrics.ts.",
+        "mustIncludeFiles": [
+          "src/apps/dashboard/metrics.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "record is defined in src/apps/dashboard/metrics.ts."
+        ],
+        "mustNotClaim": [
+          "record is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/apps/dashboard/metrics.ts contains the record definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "record-def",
+            "kind": "file",
+            "label": "record definition",
+            "path": "src/apps/dashboard/metrics.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-register-job",
+      "repoId": "large-monorepo",
+      "intent": "Where is registerJob defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "registerJob is defined in src/core/registry.ts.",
+        "mustIncludeFiles": [
+          "src/core/registry.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "registerJob is defined in src/core/registry.ts."
+        ],
+        "mustNotClaim": [
+          "registerJob is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/core/registry.ts contains the registerJob definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "register-job-def",
+            "kind": "file",
+            "label": "registerJob definition",
+            "path": "src/core/registry.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 16
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-required-fields",
+      "repoId": "large-monorepo",
+      "intent": "Where is REQUIRED_FIELDS defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "REQUIRED_FIELDS is defined in src/services/ingest/config.py.",
+        "mustIncludeFiles": [
+          "src/services/ingest/config.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "REQUIRED_FIELDS is defined in src/services/ingest/config.py."
+        ],
+        "mustNotClaim": [
+          "REQUIRED_FIELDS is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/ingest/config.py contains the REQUIRED_FIELDS definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "required-fields-def",
+            "kind": "file",
+            "label": "REQUIRED_FIELDS definition",
+            "path": "src/services/ingest/config.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 4
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "lm-symbol-save-job",
+      "repoId": "large-monorepo",
+      "intent": "Where is saveJob defined in the large-monorepo repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "saveJob is defined in src/platform/storage/index.ts.",
+        "mustIncludeFiles": [
+          "src/platform/storage/index.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "saveJob is defined in src/platform/storage/index.ts."
+        ],
+        "mustNotClaim": [
+          "saveJob is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/platform/storage/index.ts contains the saveJob definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "save-job-def",
+            "kind": "file",
+            "label": "saveJob definition",
+            "path": "src/platform/storage/index.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 15
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    }
+  ]
+}

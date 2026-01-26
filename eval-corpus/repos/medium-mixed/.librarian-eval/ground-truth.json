@@ -1,0 +1,1062 @@
+{
+  "version": "0.1.0",
+  "repoId": "medium-mixed",
+  "queries": [
+    {
+      "queryId": "mm-default-config",
+      "repoId": "medium-mixed",
+      "intent": "What are the default ingest configuration values?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "DEFAULT_CONFIG sets batchSize to 50, allowDuplicateIds to false, and maxPayloadBytes to 1024 * 256.",
+        "mustIncludeFiles": [
+          "src/ts/config.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "batchSize is 50 and allowDuplicateIds is false.",
+          "maxPayloadBytes is 1024 * 256."
+        ],
+        "mustNotClaim": [
+          "The defaults are loaded from environment variables."
+        ],
+        "acceptableVariations": [
+          "DEFAULT_CONFIG uses batchSize 50, disallows duplicate ids, and caps payloads at 256KB."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "default-config",
+            "kind": "file",
+            "label": "DEFAULT_CONFIG",
+            "path": "src/ts/config.ts",
+            "location": {
+              "startLine": 7,
+              "endLine": 10
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-sanitize-line",
+      "repoId": "medium-mixed",
+      "intent": "How does sanitizeLine clean a CSV line?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "sanitizeLine removes null characters and trims whitespace from the line.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "It replaces \u0000 characters with empty strings.",
+          "The result is trimmed of surrounding whitespace."
+        ],
+        "mustNotClaim": [
+          "It lowercases the line or removes commas."
+        ],
+        "acceptableVariations": [
+          "sanitizeLine strips null bytes and trims whitespace."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "sanitize-line",
+            "kind": "file",
+            "label": "sanitizeLine",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 16,
+              "endLine": 17
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-parse-csv",
+      "repoId": "medium-mixed",
+      "intent": "How does parseCsv build RawRecord entries?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "parseCsv splits input on newlines, splits each row by commas, trims fields, and returns RawRecord objects with id, payload, and source.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Rows are split on CRLF or LF and empty rows are filtered out.",
+          "Each row is split by comma into id, payload, and source and trimmed."
+        ],
+        "mustNotClaim": [
+          "parseCsv supports quoted commas or escapes."
+        ],
+        "acceptableVariations": [
+          "CSV parsing is a simple newline/comma split with trimming into id/payload/source."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "parse-csv",
+            "kind": "file",
+            "label": "parseCsv",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 20,
+              "endLine": 25
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-validate-payload-size",
+      "repoId": "medium-mixed",
+      "intent": "What does validatePayloadSize enforce?",
+      "category": "security",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "validatePayloadSize sums payload lengths and throws an error when the total exceeds config.maxPayloadBytes.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/ts/config.ts"
+        ],
+        "mustIncludeFacts": [
+          "Payload bytes are summed across all records.",
+          "An error is thrown when the total exceeds maxPayloadBytes."
+        ],
+        "mustNotClaim": [
+          "It validates payloads one by one with a per-record max."
+        ],
+        "acceptableVariations": [
+          "It enforces a total payload size cap using config.maxPayloadBytes."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "payload-size",
+            "kind": "file",
+            "label": "validatePayloadSize",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 28,
+              "endLine": 32
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-build-batches",
+      "repoId": "medium-mixed",
+      "intent": "How does buildBatches split records?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "buildBatches validates payload size, then slices records into batchSize chunks and labels them batch-1, batch-2, etc.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/ts/config.ts"
+        ],
+        "mustIncludeFacts": [
+          "validatePayloadSize is called before batching.",
+          "Each batchId is derived from the batch index starting at 1."
+        ],
+        "mustNotClaim": [
+          "It creates one batch per record regardless of batchSize."
+        ],
+        "acceptableVariations": [
+          "Records are chunked by config.batchSize after payload validation."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "build-batches",
+            "kind": "file",
+            "label": "buildBatches",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 35,
+              "endLine": 47
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-dedupe-records",
+      "repoId": "medium-mixed",
+      "intent": "How does dedupeRecords handle duplicate ids?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "dedupeRecords returns records unchanged when allowDuplicateIds is true; otherwise it keeps the first record for each id using a Set.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "When allowDuplicateIds is true, the original list is returned.",
+          "When false, a Set is used to filter duplicate ids and keep the first occurrence."
+        ],
+        "mustNotClaim": [
+          "Duplicates are merged or last-write-wins."
+        ],
+        "acceptableVariations": [
+          "Duplicate ids are removed unless allowDuplicateIds is true."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "dedupe-records",
+            "kind": "file",
+            "label": "dedupeRecords",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 50,
+              "endLine": 62
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-normalize-record",
+      "repoId": "medium-mixed",
+      "intent": "What does normalize_record do to a record's keys and values?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "normalize_record lowercases and trims keys, and trims values before returning the normalized dict.",
+        "mustIncludeFiles": [
+          "src/py/transform.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Keys are stripped and lowercased.",
+          "Values are stripped of surrounding whitespace."
+        ],
+        "mustNotClaim": [
+          "normalize_record casts numeric types."
+        ],
+        "acceptableVariations": [
+          "Keys become lowercase and both keys/values are stripped."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "normalize-record",
+            "kind": "file",
+            "label": "normalize_record",
+            "path": "src/py/transform.py",
+            "location": {
+              "startLine": 5,
+              "endLine": 9
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-coerce-types",
+      "repoId": "medium-mixed",
+      "intent": "How does coerce_types cast string values?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "coerce_types converts digit-only strings to int, numeric strings with a single decimal to float, otherwise leaves values as strings.",
+        "mustIncludeFiles": [
+          "src/py/transform.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "value.isdigit() is used to detect integers.",
+          "value.replace('.', '', 1).isdigit() is used to detect floats."
+        ],
+        "mustNotClaim": [
+          "It parses negative numbers or dates."
+        ],
+        "acceptableVariations": [
+          "Type coercion only handles unsigned ints and floats; other values stay strings."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "coerce-types",
+            "kind": "file",
+            "label": "coerce_types",
+            "path": "src/py/transform.py",
+            "location": {
+              "startLine": 12,
+              "endLine": 20
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-fingerprint",
+      "repoId": "medium-mixed",
+      "intent": "How is compute_fingerprint built for a record?",
+      "category": "security",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "compute_fingerprint sorts record keys, concatenates key=value pairs, prepends the salt, and returns the SHA-256 hex digest.",
+        "mustIncludeFiles": [
+          "src/py/transform.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Keys are sorted before building the payload string.",
+          "The digest is sha256 of {salt}:{payload} and returned as hex."
+        ],
+        "mustNotClaim": [
+          "It uses MD5 or a random UUID."
+        ],
+        "acceptableVariations": [
+          "Fingerprinting is a salted SHA-256 of the sorted key/value payload."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "compute-fingerprint",
+            "kind": "file",
+            "label": "compute_fingerprint",
+            "path": "src/py/transform.py",
+            "location": {
+              "startLine": 24,
+              "endLine": 27
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-exporter-empty",
+      "repoId": "medium-mixed",
+      "intent": "What happens if SendBatch is called with no records?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "SendBatch returns an error immediately when the records slice is empty.",
+        "mustIncludeFiles": [
+          "src/go/exporter.go"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "The function checks len(records) == 0.",
+          "It returns an error with message 'empty batch'."
+        ],
+        "mustNotClaim": [
+          "SendBatch silently succeeds with zero records."
+        ],
+        "acceptableVariations": [
+          "Empty batches are rejected with an error."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "send-batch-empty",
+            "kind": "file",
+            "label": "SendBatch empty check",
+            "path": "src/go/exporter.go",
+            "location": {
+              "startLine": 21,
+              "endLine": 24
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-exporter-retry",
+      "repoId": "medium-mixed",
+      "intent": "How does SendBatch handle retries when the endpoint is missing?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "SendBatch retries up to RetryLimit, sleeping between attempts, and returns a formatted error if the endpoint is still missing.",
+        "mustIncludeFiles": [
+          "src/go/exporter.go"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "When Endpoint is empty, lastErr is set to 'missing endpoint' and the loop continues.",
+          "If lastErr remains after all attempts, SendBatch returns a formatted error including the retry count."
+        ],
+        "mustNotClaim": [
+          "SendBatch throws after the first failure without retrying."
+        ],
+        "acceptableVariations": [
+          "It retries and sleeps per attempt, then errors if no endpoint is configured."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "send-batch-retry",
+            "kind": "file",
+            "label": "SendBatch retry loop",
+            "path": "src/go/exporter.go",
+            "location": {
+              "startLine": 25,
+              "endLine": 36
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-validator-require-fields",
+      "repoId": "medium-mixed",
+      "intent": "How does Validator.requireFields enforce required keys?",
+      "category": "security",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Validator.requireFields iterates required keys and throws IllegalArgumentException if the record is missing any key.",
+        "mustIncludeFiles": [
+          "src/java/Validator.java"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "The method loops through each required key.",
+          "An IllegalArgumentException is thrown when a key is missing."
+        ],
+        "mustNotClaim": [
+          "Missing keys are filled with defaults."
+        ],
+        "acceptableVariations": [
+          "The validator throws when a required field is absent."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "require-fields",
+            "kind": "file",
+            "label": "requireFields",
+            "path": "src/java/Validator.java",
+            "location": {
+              "startLine": 7,
+              "endLine": 12
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-validator-range",
+      "repoId": "medium-mixed",
+      "intent": "What does Validator.validateRange do when values are out of range?",
+      "category": "security",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "validateRange throws an IllegalArgumentException if the value is below min or above max.",
+        "mustIncludeFiles": [
+          "src/java/Validator.java"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "The method checks value < min or value > max.",
+          "The error message includes the field name and the allowed range."
+        ],
+        "mustNotClaim": [
+          "Out-of-range values are clamped."
+        ],
+        "acceptableVariations": [
+          "Range validation fails fast with IllegalArgumentException when outside min/max."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "validate-range",
+            "kind": "file",
+            "label": "validateRange",
+            "path": "src/java/Validator.java",
+            "location": {
+              "startLine": 15,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-validator-enum",
+      "repoId": "medium-mixed",
+      "intent": "How does Validator.validateEnum handle invalid values?",
+      "category": "security",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "validateEnum throws IllegalArgumentException when the value is not present in the allowed list.",
+        "mustIncludeFiles": [
+          "src/java/Validator.java"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "It checks allowed.contains(value).",
+          "An IllegalArgumentException is thrown when the value is not allowed."
+        ],
+        "mustNotClaim": [
+          "It falls back to the first allowed value."
+        ],
+        "acceptableVariations": [
+          "Enum validation fails with IllegalArgumentException for values not in the allowed list."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "validate-enum",
+            "kind": "file",
+            "label": "validateEnum",
+            "path": "src/java/Validator.java",
+            "location": {
+              "startLine": 23,
+              "endLine": 27
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-cache-get",
+      "repoId": "medium-mixed",
+      "intent": "What does TtlCache.get return for expired entries?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "TtlCache.get returns the cached value if not expired; otherwise it removes the key and returns None.",
+        "mustIncludeFiles": [
+          "src/rust/cache.rs"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "If SystemTime::now() is after expires_at, the entry is removed.",
+          "None is returned for expired or missing entries."
+        ],
+        "mustNotClaim": [
+          "Expired entries are returned with a warning flag."
+        ],
+        "acceptableVariations": [
+          "Expired cache entries are evicted and result in None."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "cache-get",
+            "kind": "file",
+            "label": "TtlCache.get",
+            "path": "src/rust/cache.rs",
+            "location": {
+              "startLine": 24,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-cache-purge",
+      "repoId": "medium-mixed",
+      "intent": "How does TtlCache.purge_expired report removed entries?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "purge_expired removes expired entries with retain and returns the number of entries removed.",
+        "mustIncludeFiles": [
+          "src/rust/cache.rs"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "It stores the size before retaining unexpired entries.",
+          "The return value is before - after."
+        ],
+        "mustNotClaim": [
+          "purge_expired returns the remaining cache size."
+        ],
+        "acceptableVariations": [
+          "The method prunes expired entries and returns how many were removed."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "cache-purge",
+            "kind": "file",
+            "label": "TtlCache.purge_expired",
+            "path": "src/rust/cache.rs",
+            "location": {
+              "startLine": 34,
+              "endLine": 37
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-build-batches",
+      "repoId": "medium-mixed",
+      "intent": "Where is buildBatches defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "buildBatches is defined in src/ts/ingest.ts.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "buildBatches is defined in src/ts/ingest.ts."
+        ],
+        "mustNotClaim": [
+          "buildBatches is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/ts/ingest.ts contains the buildBatches definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "build-batches-def",
+            "kind": "file",
+            "label": "buildBatches definition",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 64
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-cache-entry",
+      "repoId": "medium-mixed",
+      "intent": "Where is CacheEntry defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "CacheEntry is defined in src/rust/cache.rs.",
+        "mustIncludeFiles": [
+          "src/rust/cache.rs"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "CacheEntry is defined in src/rust/cache.rs."
+        ],
+        "mustNotClaim": [
+          "CacheEntry is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/rust/cache.rs contains the CacheEntry definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "cache-entry-def",
+            "kind": "file",
+            "label": "CacheEntry definition",
+            "path": "src/rust/cache.rs",
+            "location": {
+              "startLine": 1,
+              "endLine": 40
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-coerce-types",
+      "repoId": "medium-mixed",
+      "intent": "Where is coerce_types defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "coerce_types is defined in src/py/transform.py.",
+        "mustIncludeFiles": [
+          "src/py/transform.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "coerce_types is defined in src/py/transform.py."
+        ],
+        "mustNotClaim": [
+          "coerce_types is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/py/transform.py contains the coerce_types definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "coerce-types-def",
+            "kind": "file",
+            "label": "coerce_types definition",
+            "path": "src/py/transform.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 28
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-compute-fingerprint",
+      "repoId": "medium-mixed",
+      "intent": "Where is compute_fingerprint defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "compute_fingerprint is defined in src/py/transform.py.",
+        "mustIncludeFiles": [
+          "src/py/transform.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "compute_fingerprint is defined in src/py/transform.py."
+        ],
+        "mustNotClaim": [
+          "compute_fingerprint is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/py/transform.py contains the compute_fingerprint definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "compute-fingerprint-def",
+            "kind": "file",
+            "label": "compute_fingerprint definition",
+            "path": "src/py/transform.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 28
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-dedupe-records",
+      "repoId": "medium-mixed",
+      "intent": "Where is dedupeRecords defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "dedupeRecords is defined in src/ts/ingest.ts.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "dedupeRecords is defined in src/ts/ingest.ts."
+        ],
+        "mustNotClaim": [
+          "dedupeRecords is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/ts/ingest.ts contains the dedupeRecords definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "dedupe-records-def",
+            "kind": "file",
+            "label": "dedupeRecords definition",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 64
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-default-config",
+      "repoId": "medium-mixed",
+      "intent": "Where is DEFAULT_CONFIG defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "DEFAULT_CONFIG is defined in src/ts/config.ts.",
+        "mustIncludeFiles": [
+          "src/ts/config.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "DEFAULT_CONFIG is defined in src/ts/config.ts."
+        ],
+        "mustNotClaim": [
+          "DEFAULT_CONFIG is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/ts/config.ts contains the DEFAULT_CONFIG definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "default-config-def",
+            "kind": "file",
+            "label": "DEFAULT_CONFIG definition",
+            "path": "src/ts/config.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 12
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-exporter",
+      "repoId": "medium-mixed",
+      "intent": "Where is Exporter defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Exporter is defined in src/go/exporter.go.",
+        "mustIncludeFiles": [
+          "src/go/exporter.go"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Exporter is defined in src/go/exporter.go."
+        ],
+        "mustNotClaim": [
+          "Exporter is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/go/exporter.go contains the Exporter definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "exporter-def",
+            "kind": "file",
+            "label": "Exporter definition",
+            "path": "src/go/exporter.go",
+            "location": {
+              "startLine": 1,
+              "endLine": 40
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-get",
+      "repoId": "medium-mixed",
+      "intent": "Where is get defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "get is defined in src/rust/cache.rs.",
+        "mustIncludeFiles": [
+          "src/rust/cache.rs"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "get is defined in src/rust/cache.rs."
+        ],
+        "mustNotClaim": [
+          "get is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/rust/cache.rs contains the get definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "get-def",
+            "kind": "file",
+            "label": "get definition",
+            "path": "src/rust/cache.rs",
+            "location": {
+              "startLine": 1,
+              "endLine": 40
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-ingest-batch",
+      "repoId": "medium-mixed",
+      "intent": "Where is IngestBatch defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "IngestBatch is defined in src/ts/ingest.ts.",
+        "mustIncludeFiles": [
+          "src/ts/ingest.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "IngestBatch is defined in src/ts/ingest.ts."
+        ],
+        "mustNotClaim": [
+          "IngestBatch is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/ts/ingest.ts contains the IngestBatch definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "ingest-batch-def",
+            "kind": "file",
+            "label": "IngestBatch definition",
+            "path": "src/ts/ingest.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 64
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-ingest-config",
+      "repoId": "medium-mixed",
+      "intent": "Where is IngestConfig defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "IngestConfig is defined in src/ts/config.ts.",
+        "mustIncludeFiles": [
+          "src/ts/config.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "IngestConfig is defined in src/ts/config.ts."
+        ],
+        "mustNotClaim": [
+          "IngestConfig is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/ts/config.ts contains the IngestConfig definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "ingest-config-def",
+            "kind": "file",
+            "label": "IngestConfig definition",
+            "path": "src/ts/config.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 12
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-insert",
+      "repoId": "medium-mixed",
+      "intent": "Where is insert defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "insert is defined in src/rust/cache.rs.",
+        "mustIncludeFiles": [
+          "src/rust/cache.rs"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "insert is defined in src/rust/cache.rs."
+        ],
+        "mustNotClaim": [
+          "insert is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/rust/cache.rs contains the insert definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "insert-def",
+            "kind": "file",
+            "label": "insert definition",
+            "path": "src/rust/cache.rs",
+            "location": {
+              "startLine": 1,
+              "endLine": 40
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mm-symbol-normalize-record",
+      "repoId": "medium-mixed",
+      "intent": "Where is normalize_record defined in the medium-mixed repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "normalize_record is defined in src/py/transform.py.",
+        "mustIncludeFiles": [
+          "src/py/transform.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "normalize_record is defined in src/py/transform.py."
+        ],
+        "mustNotClaim": [
+          "normalize_record is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/py/transform.py contains the normalize_record definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "normalize-record-def",
+            "kind": "file",
+            "label": "normalize_record definition",
+            "path": "src/py/transform.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 28
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    }
+  ]
+}

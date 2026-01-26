@@ -160,7 +160,7 @@ class MockEvidenceGraphStorage implements Partial<EvidenceGraphStorage> {
     return this.contradictions.filter((c) => c.status === 'unresolved');
   }
 
-  async updateClaimConfidence(_id: ClaimId, _confidence: unknown): Promise<void> {
+  async updateClaimSignalStrength(_id: ClaimId, _confidence: unknown): Promise<void> {
     // No-op for tests
   }
 

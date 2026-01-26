@@ -528,6 +528,13 @@ export {
   createFileQuery,
   createRelatedQuery,
 } from './query.js';
+export {
+  executeQueryPipeline,
+} from './execution_pipeline.js';
+export type {
+  ExecutionPipelineOptions,
+  ExecutionPipelineResult,
+} from './execution_pipeline.js';
 
 // Bootstrap API
 export {

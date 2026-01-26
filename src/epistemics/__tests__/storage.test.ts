@@ -26,12 +26,12 @@ import {
   createDefeater,
   createContradiction,
   createEmptyEvidenceGraph,
-  createDefaultConfidence,
   type Claim,
   type EvidenceEdge,
   type ExtendedDefeater,
   type Contradiction,
 } from '../types.js';
+import { deterministic } from '../confidence.js';
 
 describe('Evidence Graph Storage', () => {
   let storage: EvidenceGraphStorage;
@@ -96,7 +96,8 @@ describe('Evidence Graph Storage', () => {
           location: { file: 'test.ts', startLine: 1, endLine: 10 },
         },
         source: { type: 'llm', id: 'test-model', version: '1.0' },
-        confidence: {
+        confidence: deterministic(true, 'test_claim'),
+        signalStrength: {
           retrieval: 0.8,
           structural: 0.9,
           semantic: 0.7,
@@ -168,11 +169,11 @@ describe('Evidence Graph Storage', () => {
       expect(retrieved!.status).toBe('defeated');
     });
 
-    it('should update claim confidence', async () => {
-      const claim = createTestClaim('claim-8', 'Confidence test');
+    it('should update claim signal strength', async () => {
+      const claim = createTestClaim('claim-8', 'Signal strength test');
       await storage.upsertClaim(claim);
 
-      const newConfidence = {
+      const newSignalStrength = {
         overall: 0.9,
         retrieval: 0.95,
         structural: 0.9,
@@ -182,22 +183,23 @@ describe('Evidence Graph Storage', () => {
         aggregationMethod: 'geometric_mean' as const,
       };
 
-      await storage.updateClaimConfidence(claim.id, newConfidence);
+      await storage.updateClaimSignalStrength(claim.id, newSignalStrength);
       const retrieved = await storage.getClaim(claim.id);
 
-      expect(retrieved!.confidence.overall).toBeCloseTo(0.9, 2);
-      expect(retrieved!.confidence.retrieval).toBeCloseTo(0.95, 2);
+      expect(retrieved!.signalStrength.overall).toBeCloseTo(0.9, 2);
+      expect(retrieved!.signalStrength.retrieval).toBeCloseTo(0.95, 2);
     });
 
-    it('should filter claims by minimum confidence', async () => {
-      const highConfidenceClaim = createTestClaim('claim-9', 'High confidence');
-      const lowConfidenceClaim = createClaim({
+    it('should filter claims by minimum signal strength', async () => {
+      const highSignalClaim = createTestClaim('claim-9', 'High signal');
+      const lowSignalClaim = createClaim({
         id: 'claim-10',
-        proposition: 'Low confidence',
+        proposition: 'Low signal',
         type: 'semantic',
         subject: { type: 'function', id: 'func', name: 'fn' },
         source: { type: 'llm', id: 'model' },
-        confidence: {
+        confidence: deterministic(true, 'test_claim'),
+        signalStrength: {
           retrieval: 0.2,
           structural: 0.2,
           semantic: 0.2,
@@ -206,11 +208,11 @@ describe('Evidence Graph Storage', () => {
         },
       });
 
-      await storage.upsertClaims([highConfidenceClaim, lowConfidenceClaim]);
+      await storage.upsertClaims([highSignalClaim, lowSignalClaim]);
 
-      const highConfClaims = await storage.getClaims({ minConfidence: 0.5 });
-      expect(highConfClaims.length).toBe(1);
-      expect(highConfClaims[0].id).toBe('claim-9');
+      const highSignalClaims = await storage.getClaims({ minSignalStrength: 0.5 });
+      expect(highSignalClaims.length).toBe(1);
+      expect(highSignalClaims[0].id).toBe('claim-9');
     });
 
     it('should paginate claims', async () => {
@@ -745,7 +747,7 @@ describe('Evidence Graph Storage', () => {
       expect(stats.edgeCount).toBe(1);
       expect(stats.activeDefeaterCount).toBe(1);
       expect(stats.unresolvedContradictionCount).toBe(1);
-      expect(stats.avgConfidence).toBeGreaterThan(0);
+      expect(stats.avgSignalStrength).toBeGreaterThan(0);
     });
 
     it('should count stale claims', async () => {

@@ -1,5 +1,5 @@
 import type { VerificationPlan } from './verification_plan.js';
-import type { QuantifiedValueLike } from '../epistemics/quantification.js';
+import type { ConfidenceValue } from '../epistemics/confidence.js';
 
 const TECHNIQUE_CATEGORY_IDS = [
   'general',
@@ -212,7 +212,7 @@ export interface TechniquePrimitive {
   domains?: string[];
   semantics?: TechniqueFormalSemantics;
   contract?: TechniquePrimitiveContract;
-  confidence?: QuantifiedValueLike;
+  confidence?: ConfidenceValue;
   triggers: string[];
   inputsRequired: string[];
   actions: string[];
@@ -834,7 +834,7 @@ export function createTechniquePrimitive(input: {
   domains?: string[];
   semantics?: TechniqueFormalSemantics;
   contract?: TechniquePrimitiveContract;
-  confidence?: QuantifiedValueLike;
+  confidence?: ConfidenceValue;
   triggers?: string[];
   inputsRequired?: string[];
   actions?: string[];

@@ -1,7 +1,8 @@
 import type { TechniqueComposition } from '../strategic/techniques.js';
 import type { LearnedRecommendations, LearningLoop, LearningQueryContext } from './learning_loop.js';
 import { EmbeddingService, cosineSimilarity } from './embeddings.js';
-import { requireProviders, type ProviderCheckOptions } from './provider_check.js';
+import { matchCompositionKeywords } from './composition_keywords.js';
+import { ProviderUnavailableError, requireProviders, type ProviderCheckOptions } from './provider_check.js';
 
 export type CompositionSelectionMode = 'keyword' | 'semantic' | 'hybrid';
 
@@ -64,6 +65,10 @@ const DEFAULT_MAX_RESULTS = 3;
 const DEFAULT_ALTERNATIVES = 3;
 const DEFAULT_USAGE_BOOST = 0.2;
 const DEFAULT_LEARNING_BOOST = 0.15;
+const FALLBACK_MATCH_TARGET = 3;
+const FALLBACK_CONFIDENCE_BASE = 0.25;
+const FALLBACK_CONFIDENCE_RANGE = 0.35;
+const FALLBACK_CONFIDENCE_CAP = 0.6;
 const MAX_INTENT_LENGTH = 10000;
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/g;
 
@@ -115,6 +120,33 @@ function computeLearningBoost(signal: LearningSignal | undefined, scale: number)
   const centered = signal.successRate - 0.5;
   const evidenceWeight = Math.min(1, signal.examples / 10);
   return clampSigned(centered * scale * evidenceWeight, scale);
+}
+
+function computeKeywordConfidence(matchedCount: number): number {
+  if (matchedCount <= 0) return 0;
+  const ratio = Math.min(1, matchedCount / FALLBACK_MATCH_TARGET);
+  return FALLBACK_CONFIDENCE_BASE + ratio * FALLBACK_CONFIDENCE_RANGE;
+}
+
+function isProviderUnavailable(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof ProviderUnavailableError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('unverified_by_trace(provider_unavailable)');
+}
+
+function rankMatches(
+  entries: Array<{ composition: TechniqueComposition; confidence: number; matchReason: MatchReason }>,
+  minConfidence: number
+): Array<{ composition: TechniqueComposition; confidence: number; matchReason: MatchReason }> {
+  return entries
+    .filter((entry) => entry.confidence >= minConfidence)
+    .sort((a, b) => {
+      if (b.confidence !== a.confidence) {
+        return b.confidence - a.confidence;
+      }
+      return a.composition.id.localeCompare(b.composition.id);
+    });
 }
 
 export class SemanticCompositionSelector implements CompositionSelector {
@@ -184,6 +216,7 @@ export class SemanticCompositionSelector implements CompositionSelector {
       throw new Error('unverified_by_trace(selection_alternatives_invalid)');
     }
     const includeIntentEmbedding = options.includeIntentEmbedding ?? true;
+    const allowKeywordFallback = options.allowKeywordFallback ?? true;
     const learningBoostScale = options.learningBoostScale ?? DEFAULT_LEARNING_BOOST;
 
     // Wire the learning loop: fetch recommendations from learner if available and not provided
@@ -203,62 +236,87 @@ export class SemanticCompositionSelector implements CompositionSelector {
       return [];
     }
 
-    await requireProviders({ llm: false, embedding: true }, options.providerCheck ?? this.providerCheck);
+    const buildSelections = (
+      ranked: Array<{ composition: TechniqueComposition; confidence: number; matchReason: MatchReason }>
+    ): CompositionMatch[] => {
+      const limited = ranked.slice(0, maxResults);
+      return limited.map((entry) => ({
+        composition: entry.composition,
+        confidence: entry.confidence,
+        matchReason: entry.matchReason,
+        alternatives: includeAlternatives
+          ? ranked
+            .filter((alt) => alt.composition.id !== entry.composition.id)
+            .slice(0, alternativesLimit)
+            .map((alt) => ({
+              compositionId: alt.composition.id,
+              confidence: alt.confidence,
+              reason: alt.matchReason,
+            }))
+          : [],
+      }));
+    };
 
-    let intentEmbedding: Float32Array;
-    let compositionEmbeddings: Map<string, Float32Array>;
+    const fallbackByKeyword = (): CompositionMatch[] => {
+      const scored = this.compositions.flatMap((composition) => {
+        const matchedKeywords = matchCompositionKeywords(sanitizedIntent, composition);
+        if (matchedKeywords.length === 0) return [];
+        const usageBoost = this.getUsageBoost(composition.id);
+        const learningBoost = computeLearningBoost(learningSignals?.[composition.id], learningBoostScale);
+        const base = computeKeywordConfidence(matchedKeywords.length);
+        const confidence = Math.min(
+          FALLBACK_CONFIDENCE_CAP,
+          clampConfidence(base + usageBoost + learningBoost)
+        );
+        const matchReason: MatchReason = { type: 'keyword', matchedKeywords };
+        return [{ composition, confidence, matchReason }];
+      });
+      const ranked = rankMatches(scored, minConfidence);
+      return buildSelections(ranked);
+    };
+
     try {
-      intentEmbedding = (await this.embeddingService.generateEmbedding({
+      await requireProviders({ llm: false, embedding: true }, options.providerCheck ?? this.providerCheck);
+
+      const intentEmbedding = (await this.embeddingService.generateEmbedding({
         text: sanitizedIntent,
         kind: 'query',
       })).embedding;
-      compositionEmbeddings = await this.resolveCompositionEmbeddings();
+      const compositionEmbeddings = await this.resolveCompositionEmbeddings();
+
+      const scored = this.compositions.map((composition) => {
+        const embedding = compositionEmbeddings.get(composition.id);
+        if (!embedding) {
+          throw new Error(`unverified_by_trace(composition_embedding_missing): ${composition.id}`);
+        }
+        const similarity = cosineSimilarity(intentEmbedding, embedding);
+        const usageBoost = this.getUsageBoost(composition.id);
+        const learningBoost = computeLearningBoost(learningSignals?.[composition.id], learningBoostScale);
+        const confidence = clampConfidence(Math.max(0, similarity) + usageBoost + learningBoost);
+        const matchReason: MatchReason = includeIntentEmbedding
+          ? { type: 'semantic', similarity, intentEmbedding }
+          : { type: 'semantic', similarity };
+        return { composition, confidence, matchReason };
+      });
+
+      const ranked = rankMatches(scored, minConfidence);
+      return buildSelections(ranked);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('unverified_by_trace(provider_unavailable)')) {
-        throw error;
+      if (allowKeywordFallback) {
+        if (
+          isProviderUnavailable(error) ||
+          message.includes('unverified_by_trace(embedding_request_failed)') ||
+          !message.includes('unverified_by_trace(')
+        ) {
+          return fallbackByKeyword();
+        }
       }
       if (message.includes('unverified_by_trace(')) {
         throw error;
       }
       throw new Error(`unverified_by_trace(embedding_request_failed): ${message}`);
     }
-
-    const scored = this.compositions.map((composition) => {
-      const embedding = compositionEmbeddings.get(composition.id);
-      if (!embedding) {
-        throw new Error(`unverified_by_trace(composition_embedding_missing): ${composition.id}`);
-      }
-      const similarity = cosineSimilarity(intentEmbedding, embedding);
-      const usageBoost = this.getUsageBoost(composition.id);
-      const learningBoost = computeLearningBoost(learningSignals?.[composition.id], learningBoostScale);
-      const confidence = clampConfidence(Math.max(0, similarity) + usageBoost + learningBoost);
-      const matchReason: MatchReason = includeIntentEmbedding
-        ? { type: 'semantic', similarity, intentEmbedding }
-        : { type: 'semantic', similarity };
-      return { composition, confidence, matchReason };
-    });
-
-    const ranked = scored
-      .filter((entry) => entry.confidence >= minConfidence)
-      .sort((a, b) => b.confidence - a.confidence);
-    const limited = ranked.slice(0, maxResults);
-
-    return limited.map((entry) => ({
-      composition: entry.composition,
-      confidence: entry.confidence,
-      matchReason: entry.matchReason,
-      alternatives: includeAlternatives
-        ? ranked
-          .filter((alt) => alt.composition.id !== entry.composition.id)
-          .slice(0, alternativesLimit)
-          .map((alt) => ({
-            compositionId: alt.composition.id,
-            confidence: alt.confidence,
-            reason: alt.matchReason,
-          }))
-        : [],
-    }));
   }
 
   private getUsageBoost(compositionId: string): number {

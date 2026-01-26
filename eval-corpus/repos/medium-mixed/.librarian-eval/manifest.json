@@ -1,0 +1,19 @@
+{
+  "repoId": "medium-mixed",
+  "name": "Medium Mixed Fixture",
+  "languages": [
+    "TypeScript",
+    "Python",
+    "Go",
+    "Java",
+    "Rust"
+  ],
+  "fileCount": 7,
+  "annotationLevel": "partial",
+  "characteristics": {
+    "documentationDensity": "medium",
+    "testCoverage": "low",
+    "architecturalClarity": "moderate",
+    "codeQuality": "average"
+  }
+}

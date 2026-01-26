@@ -43,6 +43,8 @@ import { resolveLibrarianModelConfigWithDiscovery } from './llm_env.js';
 import type { IngestionItem } from '../ingest/types.js';
 import { getIndexState, isReadyPhase, waitForIndexReady } from '../state/index_state.js';
 import type { IndexState } from '../state/index_state.js';
+import { getWatchState, type WatchState } from '../state/watch_state.js';
+import { deriveWatchHealth, type WatchHealth } from '../state/watch_health.js';
 import { HierarchicalMemory, type MemoryTier } from '../memory/hierarchical_memory.js';
 import { resolveMethodGuidance } from '../methods/method_guidance.js';
 import { globalEventBus, createQueryCompleteEvent, createQueryReceivedEvent, createQueryStartEvent, createQueryResultEvent, createQueryErrorEvent } from '../events.js';
@@ -59,7 +61,9 @@ import { logWarning } from '../telemetry/logger.js';
 import { configurable, resolveQuantifiedValue } from '../epistemics/quantification.js';
 import { buildConstructionPlan } from './construction_plan.js';
 import type { IEvidenceLedger, SessionId } from '../epistemics/evidence_ledger.js';
-import { createSessionId } from '../epistemics/evidence_ledger.js';
+import { createSessionId, REPLAY_UNAVAILABLE_TRACE } from '../epistemics/evidence_ledger.js';
+import { collectCorrelationConflictDisclosures } from '../epistemics/event_ledger_bridge.js';
+import { getCurrentGitSha } from '../utils/git.js';
 export type { LibrarianQuery, LibrarianResponse, ContextPack };
 
 type Candidate = { entityId: string; entityType: GraphEntityType; path?: string; semanticSimilarity: number; confidence: number; recency: number; pagerank: number; centrality: number; communityId: number | null; graphSimilarity?: number; cochange?: number; score?: number; };
@@ -321,7 +325,7 @@ export async function queryLibrarian(
   let adequacyReport: AdequacyReport | null = null;
   const disclosures: string[] = [];
   let traceSessionId: SessionId | undefined;
-  let traceId = 'unverified_by_trace(replay_unavailable)';
+  let traceId: string = REPLAY_UNAVAILABLE_TRACE;
   let constructionPlan: ConstructionPlan = {
     id: `cp_${randomUUID()}`,
     templateId: 'T1',
@@ -332,9 +336,9 @@ export async function queryLibrarian(
   };
   try {
     traceSessionId = traceOptions.evidenceLedger ? (traceOptions.sessionId ?? createSessionId()) : undefined;
-    traceId = traceSessionId ?? 'unverified_by_trace(replay_unavailable)';
+    traceId = traceSessionId ?? REPLAY_UNAVAILABLE_TRACE;
     if (!traceSessionId) {
-      disclosures.push('unverified_by_trace(replay_unavailable): Evidence ledger unavailable for this query.');
+      disclosures.push(`${REPLAY_UNAVAILABLE_TRACE}: Evidence ledger unavailable for this query.`);
     }
     const stageObserver = normalizeStageObserver(
       traceOptions.evidenceLedger && traceSessionId
@@ -364,7 +368,7 @@ export async function queryLibrarian(
     let llmAvailable = llmRequirement === 'required';
     query = { ...query, llmRequirement };
     const capabilities = resolveStorageCapabilities(storage);
-    const stageTracker = createStageTracker(stageObserver);
+  const stageTracker = createStageTracker(stageObserver);
     const recordCoverageGap: RecordCoverageGap = (stage, message, severity = 'moderate', remediation) => {
       coverageGaps.push(message);
       stageTracker.issue(stage, { message, severity, remediation });
@@ -382,6 +386,20 @@ export async function queryLibrarian(
       ledger: traceOptions.evidenceLedger,
       sessionId: traceSessionId,
     });
+
+    const { disclosures: watchDisclosures, health: watchHealth, state: watchState } = await buildWatchDisclosures({
+      storage,
+      workspaceRoot,
+    });
+    if (watchDisclosures.length) {
+      disclosures.push(...watchDisclosures);
+      recordCoverageGap(
+        'post_processing',
+        watchDisclosures.join('; '),
+        'moderate',
+        'Ensure watch mode is healthy or re-run bootstrap for fresh indexing.'
+      );
+    }
     const embeddingProviderReady = providerSnapshot.status.embedding.available;
     const llmProviderReady = providerSnapshot.status.llm.available;
     const hasDirectAnchors = Boolean(query.affectedFiles?.length);
@@ -473,7 +491,7 @@ export async function queryLibrarian(
     if (cached) {
       const queryId = cacheKey || randomUUID();
       errorQueryId = queryId;
-      void globalEventBus.emit(createQueryReceivedEvent(queryId, query.intent ?? '', query.depth ?? 'L1'));
+      void globalEventBus.emit(createQueryReceivedEvent(queryId, query.intent ?? '', query.depth ?? 'L1', traceSessionId));
       const cachedResponse = {
         ...cached,
         cacheHit: true,
@@ -488,7 +506,7 @@ export async function queryLibrarian(
         await cacheStore.recordQueryCacheAccess(cacheKey);
       }
       for (const pack of cachedResponse.packs) await storage.recordContextPackAccess(pack.packId);
-      void globalEventBus.emit(createQueryCompleteEvent(queryId, cachedResponse.packs.length, true, cachedResponse.latencyMs));
+      void globalEventBus.emit(createQueryCompleteEvent(queryId, cachedResponse.packs.length, true, cachedResponse.latencyMs, traceSessionId));
       if (traceOptions.evidenceLedger && traceSessionId) {
         void appendQueryEvidence(traceOptions.evidenceLedger, traceSessionId, 'query_start', {
           queryId,
@@ -509,8 +527,8 @@ export async function queryLibrarian(
   }
   const queryId = allowCache && cacheKey ? cacheKey : randomUUID();
   errorQueryId = queryId; // Update for error tracking
-  void globalEventBus.emit(createQueryReceivedEvent(queryId, query.intent ?? '', query.depth ?? 'L1'));
-  void globalEventBus.emit(createQueryStartEvent(queryId, query.intent ?? '', query.depth ?? 'L1'));
+  void globalEventBus.emit(createQueryReceivedEvent(queryId, query.intent ?? '', query.depth ?? 'L1', traceSessionId));
+  void globalEventBus.emit(createQueryStartEvent(queryId, query.intent ?? '', query.depth ?? 'L1', traceSessionId));
   if (traceOptions.evidenceLedger && traceSessionId) {
     void appendQueryEvidence(traceOptions.evidenceLedger, traceSessionId, 'query_start', {
       queryId,
@@ -760,11 +778,20 @@ export async function queryLibrarian(
   });
   response.stages = stageReports;
   response.coverage = coverage;
+  if (traceOptions.evidenceLedger && traceSessionId) {
+    const conflictDisclosures = await collectCorrelationConflictDisclosures(
+      traceOptions.evidenceLedger,
+      traceSessionId
+    );
+    if (conflictDisclosures.length) {
+      disclosures.push(...conflictDisclosures);
+    }
+  }
   if (allowCache) {
     await setCachedQuery(cacheKey, response, storage, query);
   }
-  void globalEventBus.emit(createQueryCompleteEvent(queryId, response.packs.length, cacheHit, response.latencyMs));
-  void globalEventBus.emit(createQueryResultEvent(queryId, response.packs.length, response.totalConfidence, response.latencyMs));
+  void globalEventBus.emit(createQueryCompleteEvent(queryId, response.packs.length, cacheHit, response.latencyMs, traceSessionId));
+  void globalEventBus.emit(createQueryResultEvent(queryId, response.packs.length, response.totalConfidence, response.latencyMs, traceSessionId));
   if (traceOptions.evidenceLedger && traceSessionId) {
     void appendQueryEvidence(traceOptions.evidenceLedger, traceSessionId, 'query_complete', {
       queryId,
@@ -779,7 +806,7 @@ export async function queryLibrarian(
   } catch (error) {
     // Emit query_error event when query fails
     const errorMessage = error instanceof Error ? error.message : String(error);
-    void globalEventBus.emit(createQueryErrorEvent(errorQueryId, errorMessage));
+    void globalEventBus.emit(createQueryErrorEvent(errorQueryId, errorMessage, traceSessionId));
     if (traceOptions.evidenceLedger && traceSessionId) {
       void appendQueryEvidence(traceOptions.evidenceLedger, traceSessionId, 'query_error', {
         queryId: errorQueryId,
@@ -3014,6 +3041,53 @@ function resolveEvidenceEntityType(pack: ContextPack): 'function' | 'module' | n
   if (pack.packType === 'module_context' || pack.packType === 'change_impact' || pack.packType === 'pattern_context' || pack.packType === 'decision_context') return 'module';
   return noResult();
 }
+async function buildWatchDisclosures(options: {
+  storage: LibrarianStorage;
+  workspaceRoot: string;
+  now?: Date;
+}): Promise<{ disclosures: string[]; state: WatchState | null; health: WatchHealth | null }> {
+  const disclosures: string[] = [];
+  let state: WatchState | null = null;
+  let health: WatchHealth | null = null;
+  try {
+    state = await getWatchState(options.storage);
+    health = deriveWatchHealth(state);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    disclosures.push(`unverified_by_trace(watch_state_unavailable): ${message}`);
+  }
+  if (!state) {
+    disclosures.push('unverified_by_trace(watch_state_missing): watch state unavailable');
+    return { disclosures, state: null, health: null };
+  }
+
+  const now = options.now ?? new Date();
+  if (state.storage_attached === false) {
+    disclosures.push('unverified_by_trace(watch_storage_detached): watch storage not attached');
+  }
+  if (state.needs_catchup) {
+    disclosures.push('unverified_by_trace(watch_needs_catchup): watch requires catch-up');
+  }
+  if (health?.suspectedDead) {
+    disclosures.push('unverified_by_trace(watch_suspected_dead): watcher heartbeat stale');
+  }
+  if (state.cursor?.kind === 'git') {
+    const headSha = getCurrentGitSha(options.workspaceRoot);
+    if (headSha && state.cursor.lastIndexedCommitSha && headSha !== state.cursor.lastIndexedCommitSha) {
+      disclosures.push('unverified_by_trace(watch_cursor_stale): watch cursor lags HEAD');
+    }
+  } else if (state.cursor?.kind === 'fs') {
+    const lastReconcile = Date.parse(state.cursor.lastReconcileCompletedAt);
+    if (Number.isFinite(lastReconcile)) {
+      const stalenessMs = health?.stalenessMs ?? 60_000;
+      if (now.getTime() - lastReconcile > stalenessMs) {
+        disclosures.push('unverified_by_trace(watch_reconcile_stale): filesystem reconcile is stale');
+      }
+    }
+  }
+
+  return { disclosures, state, health };
+}
 function assessIndexState(state: IndexState): { warning: string | null; confidenceCap: number | null } {
   if (isReadyPhase(state.phase)) {
     return { warning: null, confidenceCap: null };
@@ -3084,6 +3158,7 @@ export function createRelatedQuery(concept: string, context?: string[]): Librari
 export const __testing = {
   createStageTracker,
   buildCoverageAssessment,
+  buildWatchDisclosures,
   runRerankStage,
   runDefeaterStage,
   runMethodGuidanceStage,

@@ -63,6 +63,35 @@ export type {
   ActiveEvidenceEngineConfig,
 } from './evidence_system.js';
 export { ActiveEvidenceEngine } from './evidence_system.js';
+export {
+  KnowledgeObjectRegistry,
+  createKnowledgeObjectRegistry,
+  DEFAULT_KNOWLEDGE_OBJECT_DEFINITIONS,
+  REQUIRED_KNOWLEDGE_OBJECT_KINDS,
+  type KnowledgeObject,
+  type KnowledgeObjectBase,
+  type KnowledgeObjectDefinition,
+  type KnowledgeObjectKind,
+  type KnowledgeInvalidationRule,
+  type KnowledgeInvalidationMode,
+  type KnowledgeInvalidationTrigger,
+} from './registry.js';
+export {
+  ConstructionTemplateRegistry,
+  createConstructionTemplateRegistry,
+  DEFAULT_CONSTRUCTION_TEMPLATES,
+  DEFAULT_TEMPLATE_IDS,
+  type ConstructionTemplate,
+  type ConstructionTemplateId,
+  type IntentTemplateResolver,
+  type TemplateIntentHints,
+  type TemplateSelection,
+} from './construction_templates.js';
+export {
+  buildUcTemplateMapping,
+  resolveTemplatesForUc,
+  type UcTemplateMappingResult,
+} from './uc_template_mapping.js';
 
 // Re-export Universal Knowledge generator
 export {

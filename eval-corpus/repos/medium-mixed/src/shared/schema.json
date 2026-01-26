@@ -1,0 +1,10 @@
+{
+  "record": {
+    "required": ["id", "payload", "source"],
+    "optional": ["priority", "created_at"]
+  },
+  "constraints": {
+    "idPattern": "^[a-zA-Z0-9_-]+$",
+    "maxPayloadBytes": 262144
+  }
+}

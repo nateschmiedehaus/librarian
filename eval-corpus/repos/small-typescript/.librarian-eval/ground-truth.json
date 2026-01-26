@@ -1,0 +1,3811 @@
+{
+  "version": "0.1.0",
+  "repoId": "small-typescript",
+  "queries": [
+    {
+      "queryId": "st-db-collections",
+      "repoId": "small-typescript",
+      "intent": "Where is the in-memory database defined and what collections does it store?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "The in-memory database is defined in src/data/db.ts as a singleton DbState with arrays for users, books, loans, sessions, and audits.",
+        "mustIncludeFiles": [
+          "src/data/db.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/types.ts"
+        ],
+        "mustIncludeFacts": [
+          "DbState contains users, books, loans, sessions, and audits arrays.",
+          "getDb returns the singleton in-memory db object."
+        ],
+        "mustNotClaim": [
+          "The data is stored in SQLite or another persistent database."
+        ],
+        "acceptableVariations": [
+          "The in-memory store lives in data/db.ts and exposes a singleton with collections for users, books, loans, sessions, and audits."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "db-state",
+            "kind": "file",
+            "label": "DbState and singleton database",
+            "path": "src/data/db.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "auth-session-creation",
+      "repoId": "small-typescript",
+      "intent": "How are sessions created and what fields are set on a session?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "createSession builds a session with a generated token, userId, createdAt timestamp, and expiresAt based on config.sessionTtlDays, then stores it in db.sessions.",
+        "mustIncludeFiles": [
+          "src/auth/sessionStore.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.ts",
+          "src/data/db.ts",
+          "src/types.ts"
+        ],
+        "mustIncludeFacts": [
+          "createSession sets createdAt using nowIso and expiresAt using addDays with config.sessionTtlDays.",
+          "Sessions are pushed into the in-memory db.sessions array."
+        ],
+        "mustNotClaim": [
+          "Sessions are JWTs stored in Redis."
+        ],
+        "acceptableVariations": [
+          "Session creation uses nextId for the token and stores the session record in the in-memory DB."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "session-create",
+            "kind": "file",
+            "label": "createSession implementation",
+            "path": "src/auth/sessionStore.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 20
+            }
+          },
+          {
+            "refId": "config-session-ttl",
+            "kind": "file",
+            "label": "sessionTtlDays config",
+            "path": "src/config.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 7
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "auth-authenticate",
+      "repoId": "small-typescript",
+      "intent": "What does authenticate(token) check before returning a user?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "authenticate loads the session by token, rejects expired sessions, then loads the user and rejects inactive users before returning the user.",
+        "mustIncludeFiles": [
+          "src/auth/auth.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/auth/sessionStore.ts",
+          "src/repositories/userRepository.ts"
+        ],
+        "mustIncludeFacts": [
+          "authenticate uses getSession and isSessionExpired to validate the session.",
+          "authenticate loads the user by id and throws if the user is inactive."
+        ],
+        "mustNotClaim": [
+          "authenticate verifies a password or API key."
+        ],
+        "acceptableVariations": [
+          "Authentication checks session expiry and user active status before returning the user."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "auth-authenticate",
+            "kind": "file",
+            "label": "authenticate checks",
+            "path": "src/auth/auth.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 17
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "auth-require-role",
+      "repoId": "small-typescript",
+      "intent": "Where is role enforcement implemented and how is it checked?",
+      "category": "security",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Role enforcement lives in auth/auth.ts via requireRole, which calls roleAllows to ensure the user's role is included in the allowed list.",
+        "mustIncludeFiles": [
+          "src/auth/auth.ts",
+          "src/auth/roles.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "requireRole throws when roleAllows returns false.",
+          "roleAllows checks allowed.includes(role)."
+        ],
+        "mustNotClaim": [
+          "Roles are compared using ROLE_ORDER or numeric weights."
+        ],
+        "acceptableVariations": [
+          "Authorization uses requireRole, which allows roles only if the allowed list includes the user's role."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "require-role",
+            "kind": "file",
+            "label": "requireRole logic",
+            "path": "src/auth/auth.ts",
+            "location": {
+              "startLine": 19,
+              "endLine": 21
+            }
+          },
+          {
+            "refId": "role-allows",
+            "kind": "file",
+            "label": "roleAllows implementation",
+            "path": "src/auth/roles.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 4
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "controller-book-roles",
+      "repoId": "small-typescript",
+      "intent": "Which roles can add books or update inventory?",
+      "category": "security",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "bookController requires librarian or admin for addBook and updateInventory; members can only use findByTag.",
+        "mustIncludeFiles": [
+          "src/controllers/bookController.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/auth/auth.ts"
+        ],
+        "mustIncludeFacts": [
+          "addBook and updateInventory call requireRole with ['librarian', 'admin'].",
+          "findByTag allows member, librarian, or admin roles."
+        ],
+        "mustNotClaim": [
+          "Members can update inventory."
+        ],
+        "acceptableVariations": [
+          "Only librarian/admin roles can add books or change inventory; tag search is open to any authenticated role."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "book-controller",
+            "kind": "file",
+            "label": "book controller role checks",
+            "path": "src/controllers/bookController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 24
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "controller-user-disable",
+      "repoId": "small-typescript",
+      "intent": "Which controller action disables users and what role is required?",
+      "category": "security",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "userController.disableUser enforces the admin role and then deactivates the user via userService.deactivateUser.",
+        "mustIncludeFiles": [
+          "src/controllers/userController.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/auth/auth.ts",
+          "src/services/userService.ts"
+        ],
+        "mustIncludeFacts": [
+          "disableUser calls requireRole with ['admin'].",
+          "disableUser delegates to deactivateUser."
+        ],
+        "mustNotClaim": [
+          "Librarians can disable users."
+        ],
+        "acceptableVariations": [
+          "Only admins can disable users via userController."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "user-controller",
+            "kind": "file",
+            "label": "user controller disable",
+            "path": "src/controllers/userController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 12
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "user-registration",
+      "repoId": "small-typescript",
+      "intent": "How does registerUser validate uniqueness and what defaults are set?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "registerUser checks for an existing email, throws ValidationError if found, and creates an active user with role defaulting to member and createdAt set to now.",
+        "mustIncludeFiles": [
+          "src/services/userService.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/repositories/userRepository.ts"
+        ],
+        "mustIncludeFacts": [
+          "registerUser calls findUserByEmail and throws ValidationError when the email already exists.",
+          "New users default to role 'member' and active true."
+        ],
+        "mustNotClaim": [
+          "registerUser deletes existing users or sets active to false."
+        ],
+        "acceptableVariations": [
+          "Registration ensures unique email and creates an active member by default."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "user-register",
+            "kind": "file",
+            "label": "registerUser implementation",
+            "path": "src/services/userService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 21
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "book-create-default-tags",
+      "repoId": "small-typescript",
+      "intent": "When creating a book, how are tags and copies set?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "createBook requires positive copies, sets copiesTotal and copiesAvailable to that count, and defaults tags to DEFAULT_TAGS when none are provided.",
+        "mustIncludeFiles": [
+          "src/services/bookService.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/constants.ts"
+        ],
+        "mustIncludeFacts": [
+          "createBook throws ValidationError when copies <= 0.",
+          "copiesTotal and copiesAvailable are both set from payload.copies and tags default to DEFAULT_TAGS when empty."
+        ],
+        "mustNotClaim": [
+          "copiesAvailable is always initialized to 0."
+        ],
+        "acceptableVariations": [
+          "Book creation validates positive copies, mirrors total/available counts, and falls back to DEFAULT_TAGS."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "book-create",
+            "kind": "file",
+            "label": "createBook logic",
+            "path": "src/services/bookService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 29
+            }
+          },
+          {
+            "refId": "default-tags",
+            "kind": "file",
+            "label": "DEFAULT_TAGS definition",
+            "path": "src/constants.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 5
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-checkout-flow",
+      "repoId": "small-typescript",
+      "intent": "Describe the checkout flow and key steps taken when a user checks out a book.",
+      "category": "architectural",
+      "difficulty": "hard",
+      "correctAnswer": {
+        "summary": "checkoutBook applies rate limiting, validates policy rules, prevents duplicate book checkouts, creates a loan with a due date, decrements inventory, sends a receipt, and records an audit event.",
+        "mustIncludeFiles": [
+          "src/services/loanService.ts",
+          "src/policy/loanPolicy.ts",
+          "src/policy/rateLimiter.ts",
+          "src/services/bookService.ts",
+          "src/services/notificationService.ts",
+          "src/services/auditService.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.ts"
+        ],
+        "mustIncludeFacts": [
+          "checkRateLimit is called before policy checks and can throw RateLimitError.",
+          "A Loan is created with dueAt = addDays(now, config.maxLoanDays) and inventory is decremented via adjustCopies.",
+          "sendLoanReceipt and recordAudit('loan.checkout', ...) are called after the loan is created."
+        ],
+        "mustNotClaim": [
+          "The checkout flow sends overdue notices or marks returnedAt."
+        ],
+        "acceptableVariations": [
+          "Checkout flow: rate limit → policy checks → create loan with due date → adjust copies → notify → audit."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-checkout",
+            "kind": "file",
+            "label": "checkoutBook implementation",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 14,
+              "endLine": 44
+            }
+          },
+          {
+            "refId": "loan-policy",
+            "kind": "file",
+            "label": "canCheckout policy rules",
+            "path": "src/policy/loanPolicy.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 29
+            }
+          },
+          {
+            "refId": "rate-limit",
+            "kind": "file",
+            "label": "rate limiter logic",
+            "path": "src/policy/rateLimiter.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-checkout-blockers",
+      "repoId": "small-typescript",
+      "intent": "What conditions can block a checkout attempt?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "Checkout can be blocked by inactive users, no available copies, too many active loans, overdue loans, or the user already having the same book checked out.",
+        "mustIncludeFiles": [
+          "src/policy/loanPolicy.ts",
+          "src/services/loanService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "canCheckout rejects inactive users, no copies, too many active loans, or overdue loans.",
+          "loanService rejects duplicate checkouts for the same book."
+        ],
+        "mustNotClaim": [
+          "Checkout is blocked due to unpaid fines or membership fees."
+        ],
+        "acceptableVariations": [
+          "Policy blocks inactive users, unavailable books, maxed loan counts, overdue loans, or duplicate checkouts."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "checkout-policy-blocks",
+            "kind": "file",
+            "label": "Policy conditions",
+            "path": "src/policy/loanPolicy.ts",
+            "location": {
+              "startLine": 10,
+              "endLine": 29
+            }
+          },
+          {
+            "refId": "checkout-duplicate",
+            "kind": "file",
+            "label": "Duplicate checkout guard",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 28,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-return",
+      "repoId": "small-typescript",
+      "intent": "What happens when returnBook is called?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "returnBook rejects already-returned loans, sets returnedAt, updates the loan, increments available copies, and records a loan.return audit event.",
+        "mustIncludeFiles": [
+          "src/services/loanService.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/services/bookService.ts",
+          "src/services/auditService.ts"
+        ],
+        "mustIncludeFacts": [
+          "returnBook throws ValidationError if returnedAt is already set.",
+          "The loan is updated with returnedAt, inventory increments by 1, and audit action loan.return is recorded."
+        ],
+        "mustNotClaim": [
+          "returnBook deletes the loan record."
+        ],
+        "acceptableVariations": [
+          "Returning a book sets returnedAt, updates inventory, and writes an audit entry."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "return-book",
+            "kind": "file",
+            "label": "returnBook implementation",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 47,
+              "endLine": 57
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-overdue-detection",
+      "repoId": "small-typescript",
+      "intent": "Which functions compute overdue loans and how is the grace period applied?",
+      "category": "architectural",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "listOverdueLoans filters open loans whose dueAt is before now, while buildOverdueReport applies config.overdueGraceDays via diffDays to include only sufficiently overdue loans.",
+        "mustIncludeFiles": [
+          "src/services/loanService.ts",
+          "src/reporting/overdueReport.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.ts",
+          "src/utils/date.ts"
+        ],
+        "mustIncludeFacts": [
+          "listOverdueLoans returns open loans where dueAt < now.",
+          "buildOverdueReport filters loans with diffDays(dueAt, nowStamp) > config.overdueGraceDays."
+        ],
+        "mustNotClaim": [
+          "Overdue detection checks returnedAt instead of dueAt."
+        ],
+        "acceptableVariations": [
+          "Overdue loans are determined first by dueAt < now, then by grace-day filtering in the report builder."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "overdue-loans",
+            "kind": "file",
+            "label": "listOverdueLoans",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 60,
+              "endLine": 62
+            }
+          },
+          {
+            "refId": "overdue-report",
+            "kind": "file",
+            "label": "buildOverdueReport filtering",
+            "path": "src/reporting/overdueReport.ts",
+            "location": {
+              "startLine": 12,
+              "endLine": 29
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "overdue-report-fields",
+      "repoId": "small-typescript",
+      "intent": "What fields are included in overdue report entries and how are missing user/book references handled?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "Overdue report entries include loanId, userName, bookTitle, and daysOverdue; missing user or book data is labeled as 'Unknown user' or 'Unknown book'.",
+        "mustIncludeFiles": [
+          "src/reporting/overdueReport.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "OverdueEntry fields are loanId, userName, bookTitle, and daysOverdue.",
+          "Missing user or book lookups fallback to 'Unknown user' or 'Unknown book'."
+        ],
+        "mustNotClaim": [
+          "The report includes user email addresses or ISBNs."
+        ],
+        "acceptableVariations": [
+          "The report maps loan IDs to user and book names, defaulting to Unknown labels when missing."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "overdue-entry",
+            "kind": "file",
+            "label": "OverdueEntry mapping",
+            "path": "src/reporting/overdueReport.ts",
+            "location": {
+              "startLine": 5,
+              "endLine": 29
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "rate-limiter-logic",
+      "repoId": "small-typescript",
+      "intent": "Describe the rate limiter state and the one-minute window logic.",
+      "category": "security",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "Rate limiting uses a Map keyed by userId storing RateLimitState {windowStart, count}; the counter resets after 60 seconds and flags requests above config.rateLimitPerMinute.",
+        "mustIncludeFiles": [
+          "src/policy/rateLimiter.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/types.ts",
+          "src/config.ts"
+        ],
+        "mustIncludeFacts": [
+          "If no current state or elapsed > 60_000, the limiter resets count to 1.",
+          "checkRateLimit returns true when nextCount exceeds config.rateLimitPerMinute."
+        ],
+        "mustNotClaim": [
+          "Rate limiting is based on IP addresses or stored in the database."
+        ],
+        "acceptableVariations": [
+          "The limiter keeps an in-memory per-user windowStart/count and trips when the count goes beyond the per-minute limit."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "rate-limit-logic",
+            "kind": "file",
+            "label": "checkRateLimit implementation",
+            "path": "src/policy/rateLimiter.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          },
+          {
+            "refId": "rate-limit-state",
+            "kind": "file",
+            "label": "RateLimitState type",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 47,
+              "endLine": 50
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "book-search-tag",
+      "repoId": "small-typescript",
+      "intent": "How does searching books by tag work?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "searchBooksByTag filters the in-memory books array for entries whose tags include the requested tag.",
+        "mustIncludeFiles": [
+          "src/repositories/bookRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "searchBooksByTag returns db.books.filter(book => book.tags.includes(tag))."
+        ],
+        "mustNotClaim": [
+          "Tag search is case-insensitive or uses full-text search."
+        ],
+        "acceptableVariations": [
+          "Book tag search is a simple includes filter over the in-memory list."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "book-search",
+            "kind": "file",
+            "label": "searchBooksByTag",
+            "path": "src/repositories/bookRepository.ts",
+            "location": {
+              "startLine": 30,
+              "endLine": 32
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-controller-overdue-report",
+      "repoId": "small-typescript",
+      "intent": "Which components are used to build the overdue report from the controller?",
+      "category": "architectural",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "loanController.overdueReport enforces librarian/admin roles, pulls users and books from the db, fetches overdue loans via listOverdueLoans, and builds the report with buildOverdueReport.",
+        "mustIncludeFiles": [
+          "src/controllers/loanController.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/services/loanService.ts",
+          "src/reporting/overdueReport.ts",
+          "src/data/db.ts"
+        ],
+        "mustIncludeFacts": [
+          "overdueReport calls requireRole with librarian/admin roles.",
+          "The controller reads db.users and db.books and passes them to buildOverdueReport along with overdue loans."
+        ],
+        "mustNotClaim": [
+          "The controller sends notifications or updates loans directly."
+        ],
+        "acceptableVariations": [
+          "The controller gathers overdue loans and joins them with users/books to build the report after role checks."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-controller-overdue",
+            "kind": "file",
+            "label": "overdueReport controller flow",
+            "path": "src/controllers/loanController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 22
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "notification-service",
+      "repoId": "small-typescript",
+      "intent": "Where are loan receipt and overdue notice notifications defined, and what data is logged?",
+      "category": "architectural",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "Notification functions live in services/notificationService.ts and log loan receipt or overdue notice metadata through utils/logger.logInfo.",
+        "mustIncludeFiles": [
+          "src/services/notificationService.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/utils/logger.ts"
+        ],
+        "mustIncludeFacts": [
+          "sendLoanReceipt logs userId, email, bookId, and dueAt.",
+          "sendOverdueNotice logs userId, email, bookId, and daysOverdue."
+        ],
+        "mustNotClaim": [
+          "Notifications send real emails or push messages."
+        ],
+        "acceptableVariations": [
+          "Notification helpers just log receipt/overdue metadata via logInfo."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "notification-service",
+            "kind": "file",
+            "label": "notification helpers",
+            "path": "src/services/notificationService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          },
+          {
+            "refId": "logger",
+            "kind": "file",
+            "label": "logInfo implementation",
+            "path": "src/utils/logger.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 9
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "audit-events",
+      "repoId": "small-typescript",
+      "intent": "What information is recorded in audit events and when are they emitted?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "recordAudit creates AuditEvent entries with id, action, actorId, createdAt, and meta; loanService emits audit events for checkout and return operations.",
+        "mustIncludeFiles": [
+          "src/services/auditService.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/services/loanService.ts"
+        ],
+        "mustIncludeFacts": [
+          "recordAudit stores events in db.audits with id from nextId and createdAt from nowIso.",
+          "loanService calls recordAudit with actions 'loan.checkout' and 'loan.return'."
+        ],
+        "mustNotClaim": [
+          "Audit events are written to a file or external logging service."
+        ],
+        "acceptableVariations": [
+          "Audits are appended to the in-memory db with metadata for loan checkout and return."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "audit-service",
+            "kind": "file",
+            "label": "recordAudit implementation",
+            "path": "src/services/auditService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 20
+            }
+          },
+          {
+            "refId": "audit-calls",
+            "kind": "file",
+            "label": "loanService audit calls",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 40,
+              "endLine": 56
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "config-values",
+      "repoId": "small-typescript",
+      "intent": "What configuration values define loan, session, rate limit, and grace periods?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "config.ts defines maxLoanDays (21), maxConcurrentLoans (3), sessionTtlDays (7), rateLimitPerMinute (5), and overdueGraceDays (2).",
+        "mustIncludeFiles": [
+          "src/config.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "maxLoanDays is 21 and maxConcurrentLoans is 3.",
+          "sessionTtlDays is 7, rateLimitPerMinute is 5, and overdueGraceDays is 2."
+        ],
+        "mustNotClaim": [
+          "These values are loaded from environment variables or a config file."
+        ],
+        "acceptableVariations": [
+          "The config object hard-codes loan, session, rate-limit, and grace-day constants."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "config-values",
+            "kind": "file",
+            "label": "config constants",
+            "path": "src/config.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 7
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "book-structure",
+      "repoId": "small-typescript",
+      "intent": "What fields make up the Book entity?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "The Book interface includes id, title, author, isbn, copiesTotal, copiesAvailable, tags, and createdAt.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Book includes copiesTotal and copiesAvailable fields.",
+          "Book has tags and createdAt fields."
+        ],
+        "mustNotClaim": [
+          "Book includes publisher or publicationYear fields."
+        ],
+        "acceptableVariations": [
+          "Book records include id/title/author/isbn plus inventory counts, tags, and createdAt."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "book-type",
+            "kind": "file",
+            "label": "Book interface",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 12,
+              "endLine": 20
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "inventory-adjustment",
+      "repoId": "small-typescript",
+      "intent": "How is book inventory adjusted during checkout and return, and what guardrails exist?",
+      "category": "impact",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "checkoutBook decrements inventory via adjustCopies(-1) and returnBook increments via adjustCopies(1); adjustCopies guards against copiesAvailable going below 0 or above copiesTotal.",
+        "mustIncludeFiles": [
+          "src/services/loanService.ts",
+          "src/services/bookService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "checkoutBook calls adjustCopies with -1 and returnBook calls adjustCopies with +1.",
+          "adjustCopies throws ValidationError if copiesAvailable would be out of range."
+        ],
+        "mustNotClaim": [
+          "Inventory is updated directly through the repository without validation."
+        ],
+        "acceptableVariations": [
+          "Loan service uses bookService.adjustCopies with guardrails to keep availability within [0, copiesTotal]."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-adjust-copies",
+            "kind": "file",
+            "label": "loanService inventory adjustments",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 40,
+              "endLine": 56
+            }
+          },
+          {
+            "refId": "adjust-copies",
+            "kind": "file",
+            "label": "adjustCopies guard",
+            "path": "src/services/bookService.ts",
+            "location": {
+              "startLine": 31,
+              "endLine": 38
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-policy-overdue",
+      "repoId": "small-typescript",
+      "intent": "What is the checkout policy regarding overdue loans?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "The checkout policy blocks users who have any open loan whose dueAt is in the past.",
+        "mustIncludeFiles": [
+          "src/policy/loanPolicy.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/utils/date.ts"
+        ],
+        "mustIncludeFacts": [
+          "canCheckout uses isPast(loan.dueAt, now) to detect overdue loans.",
+          "If any overdue loan exists, the policy returns allowed: false with reason 'User has overdue loans'."
+        ],
+        "mustNotClaim": [
+          "The policy checks overdueGraceDays or sends notifications."
+        ],
+        "acceptableVariations": [
+          "Overdue loans immediately block checkout according to canCheckout."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-policy-overdue",
+            "kind": "file",
+            "label": "overdue loan check",
+            "path": "src/policy/loanPolicy.ts",
+            "location": {
+              "startLine": 23,
+              "endLine": 28
+            }
+          },
+          {
+            "refId": "is-past",
+            "kind": "file",
+            "label": "isPast helper",
+            "path": "src/utils/date.ts",
+            "location": {
+              "startLine": 9,
+              "endLine": 11
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-controller-checkout",
+      "repoId": "small-typescript",
+      "intent": "What does loanController.checkout enforce before creating a loan?",
+      "category": "security",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "loanController.checkout requires the actor to have member, librarian, or admin role before delegating to loanService.checkoutBook.",
+        "mustIncludeFiles": [
+          "src/controllers/loanController.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/auth/auth.ts"
+        ],
+        "mustIncludeFacts": [
+          "checkout calls requireRole with ['member', 'librarian', 'admin'].",
+          "checkout delegates to checkoutBook(actor.id, bookId)."
+        ],
+        "mustNotClaim": [
+          "Only librarians can check out books."
+        ],
+        "acceptableVariations": [
+          "Loan checkout is available to any authenticated role (member, librarian, admin) per the controller."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-controller-checkout",
+            "kind": "file",
+            "label": "checkout controller",
+            "path": "src/controllers/loanController.ts",
+            "location": {
+              "startLine": 7,
+              "endLine": 10
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "demo-flow",
+      "repoId": "small-typescript",
+      "intent": "What does the demoCheckoutFlow function do in app.ts?",
+      "category": "architectural",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "demoCheckoutFlow authenticates the token, creates a sample book, registers a member, checks out the book for that member, and logs completion.",
+        "mustIncludeFiles": [
+          "src/app.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/services/bookService.ts",
+          "src/services/userService.ts",
+          "src/services/loanService.ts",
+          "src/auth/auth.ts"
+        ],
+        "mustIncludeFacts": [
+          "demoCheckoutFlow calls authenticate(token) before creating a book and member.",
+          "It registers a member and calls checkoutBook with the member id and the new book id."
+        ],
+        "mustNotClaim": [
+          "The demo flow uses controller endpoints or writes to disk."
+        ],
+        "acceptableVariations": [
+          "The demo flow authenticates, creates a book, registers a member, and checks out the book."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "demo-flow",
+            "kind": "file",
+            "label": "demoCheckoutFlow",
+            "path": "src/app.ts",
+            "location": {
+              "startLine": 16,
+              "endLine": 27
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "bootstrap-demo",
+      "repoId": "small-typescript",
+      "intent": "How does bootstrapDemo create an admin session?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "bootstrapDemo registers an admin user, creates a session for that user, logs the token, and returns the admin and session token.",
+        "mustIncludeFiles": [
+          "src/app.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/services/userService.ts",
+          "src/auth/sessionStore.ts"
+        ],
+        "mustIncludeFacts": [
+          "bootstrapDemo calls registerUser with role 'admin' and then createSession with the admin id.",
+          "It logs the session token and returns { admin, sessionToken }."
+        ],
+        "mustNotClaim": [
+          "bootstrapDemo reads credentials from environment variables."
+        ],
+        "acceptableVariations": [
+          "bootstrapDemo registers an admin, creates a session, and returns the token."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "bootstrap-demo",
+            "kind": "file",
+            "label": "bootstrapDemo implementation",
+            "path": "src/app.ts",
+            "location": {
+              "startLine": 9,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "repository-update-user",
+      "repoId": "small-typescript",
+      "intent": "How does updateUser behave when the user does not exist?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "updateUser searches the users array by id and throws NotFoundError if the user does not exist.",
+        "mustIncludeFiles": [
+          "src/repositories/userRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "updateUser uses findIndex on db.users and throws NotFoundError when index is -1."
+        ],
+        "mustNotClaim": [
+          "updateUser silently creates a new user when the id is missing."
+        ],
+        "acceptableVariations": [
+          "updateUser throws NotFoundError if it cannot find the user in the in-memory array."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "update-user",
+            "kind": "file",
+            "label": "updateUser error handling",
+            "path": "src/repositories/userRepository.ts",
+            "location": {
+              "startLine": 30,
+              "endLine": 37
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "loan-policy-max-concurrent",
+      "repoId": "small-typescript",
+      "intent": "How does the checkout policy enforce the maximum concurrent loans?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "canCheckout compares the number of open loans to config.maxConcurrentLoans and rejects when the limit is reached.",
+        "mustIncludeFiles": [
+          "src/policy/loanPolicy.ts"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.ts"
+        ],
+        "mustIncludeFacts": [
+          "canCheckout checks openLoans.length >= config.maxConcurrentLoans.",
+          "When the limit is reached, it returns allowed: false with a reason about too many active loans."
+        ],
+        "mustNotClaim": [
+          "The policy uses a per-role loan limit or checks user role ordering."
+        ],
+        "acceptableVariations": [
+          "The policy blocks checkouts when open loan count meets or exceeds the configured max."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-policy-max",
+            "kind": "file",
+            "label": "max concurrent loans check",
+            "path": "src/policy/loanPolicy.ts",
+            "location": {
+              "startLine": 20,
+              "endLine": 24
+            }
+          },
+          {
+            "refId": "config-max-loans",
+            "kind": "file",
+            "label": "maxConcurrentLoans config",
+            "path": "src/config.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 7
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-add-days",
+      "repoId": "small-typescript",
+      "intent": "Where is addDays defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "addDays is defined in src/utils/date.ts.",
+        "mustIncludeFiles": [
+          "src/utils/date.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "addDays is defined in src/utils/date.ts."
+        ],
+        "mustNotClaim": [
+          "addDays is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils/date.ts contains the addDays definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "add-days-def",
+            "kind": "file",
+            "label": "addDays definition",
+            "path": "src/utils/date.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-add-loan",
+      "repoId": "small-typescript",
+      "intent": "Where is addLoan defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "addLoan is defined in src/repositories/loanRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/loanRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "addLoan is defined in src/repositories/loanRepository.ts."
+        ],
+        "mustNotClaim": [
+          "addLoan is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/loanRepository.ts contains the addLoan definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "add-loan-def",
+            "kind": "file",
+            "label": "addLoan definition",
+            "path": "src/repositories/loanRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-add-user",
+      "repoId": "small-typescript",
+      "intent": "Where is addUser defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "addUser is defined in src/repositories/userRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/userRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "addUser is defined in src/repositories/userRepository.ts."
+        ],
+        "mustNotClaim": [
+          "addUser is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/userRepository.ts contains the addUser definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "add-user-def",
+            "kind": "file",
+            "label": "addUser definition",
+            "path": "src/repositories/userRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-adjust-copies",
+      "repoId": "small-typescript",
+      "intent": "Where is adjustCopies defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "adjustCopies is defined in src/services/bookService.ts.",
+        "mustIncludeFiles": [
+          "src/services/bookService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "adjustCopies is defined in src/services/bookService.ts."
+        ],
+        "mustNotClaim": [
+          "adjustCopies is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/bookService.ts contains the adjustCopies definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "adjust-copies-def",
+            "kind": "file",
+            "label": "adjustCopies definition",
+            "path": "src/services/bookService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 44
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-audit-event",
+      "repoId": "small-typescript",
+      "intent": "Where is AuditEvent defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "AuditEvent is defined in src/types.ts.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "AuditEvent is defined in src/types.ts."
+        ],
+        "mustNotClaim": [
+          "AuditEvent is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/types.ts contains the AuditEvent definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "audit-event-def",
+            "kind": "file",
+            "label": "AuditEvent definition",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 51
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-authenticate",
+      "repoId": "small-typescript",
+      "intent": "Where is authenticate defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "authenticate is defined in src/auth/auth.ts.",
+        "mustIncludeFiles": [
+          "src/auth/auth.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "authenticate is defined in src/auth/auth.ts."
+        ],
+        "mustNotClaim": [
+          "authenticate is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth/auth.ts contains the authenticate definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "authenticate-def",
+            "kind": "file",
+            "label": "authenticate definition",
+            "path": "src/auth/auth.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 24
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-auth-error",
+      "repoId": "small-typescript",
+      "intent": "Where is AuthError defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "AuthError is defined in src/errors.ts.",
+        "mustIncludeFiles": [
+          "src/errors.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "AuthError is defined in src/errors.ts."
+        ],
+        "mustNotClaim": [
+          "AuthError is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/errors.ts contains the AuthError definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "auth-error-def",
+            "kind": "file",
+            "label": "AuthError definition",
+            "path": "src/errors.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 35
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-book",
+      "repoId": "small-typescript",
+      "intent": "Where is Book defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Book is defined in src/types.ts.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Book is defined in src/types.ts."
+        ],
+        "mustNotClaim": [
+          "Book is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/types.ts contains the Book definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "book-def",
+            "kind": "file",
+            "label": "Book definition",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 51
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-bootstrap-demo",
+      "repoId": "small-typescript",
+      "intent": "Where is bootstrapDemo defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "bootstrapDemo is defined in src/app.ts.",
+        "mustIncludeFiles": [
+          "src/app.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "bootstrapDemo is defined in src/app.ts."
+        ],
+        "mustNotClaim": [
+          "bootstrapDemo is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/app.ts contains the bootstrapDemo definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "bootstrap-demo-def",
+            "kind": "file",
+            "label": "bootstrapDemo definition",
+            "path": "src/app.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 29
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-build-overdue-report",
+      "repoId": "small-typescript",
+      "intent": "Where is buildOverdueReport defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "buildOverdueReport is defined in src/reporting/overdueReport.ts.",
+        "mustIncludeFiles": [
+          "src/reporting/overdueReport.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "buildOverdueReport is defined in src/reporting/overdueReport.ts."
+        ],
+        "mustNotClaim": [
+          "buildOverdueReport is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/reporting/overdueReport.ts contains the buildOverdueReport definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "build-overdue-report-def",
+            "kind": "file",
+            "label": "buildOverdueReport definition",
+            "path": "src/reporting/overdueReport.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 32
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-can-checkout",
+      "repoId": "small-typescript",
+      "intent": "Where is canCheckout defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "canCheckout is defined in src/policy/loanPolicy.ts.",
+        "mustIncludeFiles": [
+          "src/policy/loanPolicy.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "canCheckout is defined in src/policy/loanPolicy.ts."
+        ],
+        "mustNotClaim": [
+          "canCheckout is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/policy/loanPolicy.ts contains the canCheckout definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "can-checkout-def",
+            "kind": "file",
+            "label": "canCheckout definition",
+            "path": "src/policy/loanPolicy.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-checkin",
+      "repoId": "small-typescript",
+      "intent": "Where is checkin defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "checkin is defined in src/controllers/loanController.ts.",
+        "mustIncludeFiles": [
+          "src/controllers/loanController.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "checkin is defined in src/controllers/loanController.ts."
+        ],
+        "mustNotClaim": [
+          "checkin is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/controllers/loanController.ts contains the checkin definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "checkin-def",
+            "kind": "file",
+            "label": "checkin definition",
+            "path": "src/controllers/loanController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 23
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-checkout",
+      "repoId": "small-typescript",
+      "intent": "Where is checkout defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "checkout is defined in src/controllers/loanController.ts.",
+        "mustIncludeFiles": [
+          "src/controllers/loanController.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "checkout is defined in src/controllers/loanController.ts."
+        ],
+        "mustNotClaim": [
+          "checkout is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/controllers/loanController.ts contains the checkout definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "checkout-def",
+            "kind": "file",
+            "label": "checkout definition",
+            "path": "src/controllers/loanController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 23
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-checkout-book",
+      "repoId": "small-typescript",
+      "intent": "Where is checkoutBook defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "checkoutBook is defined in src/services/loanService.ts.",
+        "mustIncludeFiles": [
+          "src/services/loanService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "checkoutBook is defined in src/services/loanService.ts."
+        ],
+        "mustNotClaim": [
+          "checkoutBook is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/loanService.ts contains the checkoutBook definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "checkout-book-def",
+            "kind": "file",
+            "label": "checkoutBook definition",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 63
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-check-rate-limit",
+      "repoId": "small-typescript",
+      "intent": "Where is checkRateLimit defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "checkRateLimit is defined in src/policy/rateLimiter.ts.",
+        "mustIncludeFiles": [
+          "src/policy/rateLimiter.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "checkRateLimit is defined in src/policy/rateLimiter.ts."
+        ],
+        "mustNotClaim": [
+          "checkRateLimit is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/policy/rateLimiter.ts contains the checkRateLimit definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "check-rate-limit-def",
+            "kind": "file",
+            "label": "checkRateLimit definition",
+            "path": "src/policy/rateLimiter.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 21
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-config",
+      "repoId": "small-typescript",
+      "intent": "Where is config defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "config is defined in src/config.ts.",
+        "mustIncludeFiles": [
+          "src/config.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "config is defined in src/config.ts."
+        ],
+        "mustNotClaim": [
+          "config is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/config.ts contains the config definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "config-def",
+            "kind": "file",
+            "label": "config definition",
+            "path": "src/config.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 8
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-create-book",
+      "repoId": "small-typescript",
+      "intent": "Where is createBook defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "createBook is defined in src/services/bookService.ts.",
+        "mustIncludeFiles": [
+          "src/services/bookService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "createBook is defined in src/services/bookService.ts."
+        ],
+        "mustNotClaim": [
+          "createBook is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/bookService.ts contains the createBook definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "create-book-def",
+            "kind": "file",
+            "label": "createBook definition",
+            "path": "src/services/bookService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 44
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-create-session",
+      "repoId": "small-typescript",
+      "intent": "Where is createSession defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "createSession is defined in src/auth/sessionStore.ts.",
+        "mustIncludeFiles": [
+          "src/auth/sessionStore.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "createSession is defined in src/auth/sessionStore.ts."
+        ],
+        "mustNotClaim": [
+          "createSession is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth/sessionStore.ts contains the createSession definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "create-session-def",
+            "kind": "file",
+            "label": "createSession definition",
+            "path": "src/auth/sessionStore.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-create-user",
+      "repoId": "small-typescript",
+      "intent": "Where is createUser defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "createUser is defined in src/controllers/userController.ts.",
+        "mustIncludeFiles": [
+          "src/controllers/userController.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "createUser is defined in src/controllers/userController.ts."
+        ],
+        "mustNotClaim": [
+          "createUser is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/controllers/userController.ts contains the createUser definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "create-user-def",
+            "kind": "file",
+            "label": "createUser definition",
+            "path": "src/controllers/userController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-db-state",
+      "repoId": "small-typescript",
+      "intent": "Where is DbState defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "DbState is defined in src/data/db.ts.",
+        "mustIncludeFiles": [
+          "src/data/db.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "DbState is defined in src/data/db.ts."
+        ],
+        "mustNotClaim": [
+          "DbState is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/data/db.ts contains the DbState definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "db-state-def",
+            "kind": "file",
+            "label": "DbState definition",
+            "path": "src/data/db.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 20
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-deactivate-user",
+      "repoId": "small-typescript",
+      "intent": "Where is deactivateUser defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "deactivateUser is defined in src/services/userService.ts.",
+        "mustIncludeFiles": [
+          "src/services/userService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "deactivateUser is defined in src/services/userService.ts."
+        ],
+        "mustNotClaim": [
+          "deactivateUser is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/userService.ts contains the deactivateUser definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "deactivate-user-def",
+            "kind": "file",
+            "label": "deactivateUser definition",
+            "path": "src/services/userService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 30
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-default-tags",
+      "repoId": "small-typescript",
+      "intent": "Where is DEFAULT_TAGS defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "DEFAULT_TAGS is defined in src/constants.ts.",
+        "mustIncludeFiles": [
+          "src/constants.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "DEFAULT_TAGS is defined in src/constants.ts."
+        ],
+        "mustNotClaim": [
+          "DEFAULT_TAGS is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/constants.ts contains the DEFAULT_TAGS definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "default-tags-def",
+            "kind": "file",
+            "label": "DEFAULT_TAGS definition",
+            "path": "src/constants.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 6
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-demo-checkout-flow",
+      "repoId": "small-typescript",
+      "intent": "Where is demoCheckoutFlow defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "demoCheckoutFlow is defined in src/app.ts.",
+        "mustIncludeFiles": [
+          "src/app.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "demoCheckoutFlow is defined in src/app.ts."
+        ],
+        "mustNotClaim": [
+          "demoCheckoutFlow is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/app.ts contains the demoCheckoutFlow definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "demo-checkout-flow-def",
+            "kind": "file",
+            "label": "demoCheckoutFlow definition",
+            "path": "src/app.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 29
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-diff-days",
+      "repoId": "small-typescript",
+      "intent": "Where is diffDays defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "diffDays is defined in src/utils/date.ts.",
+        "mustIncludeFiles": [
+          "src/utils/date.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "diffDays is defined in src/utils/date.ts."
+        ],
+        "mustNotClaim": [
+          "diffDays is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils/date.ts contains the diffDays definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "diff-days-def",
+            "kind": "file",
+            "label": "diffDays definition",
+            "path": "src/utils/date.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-disable-user",
+      "repoId": "small-typescript",
+      "intent": "Where is disableUser defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "disableUser is defined in src/controllers/userController.ts.",
+        "mustIncludeFiles": [
+          "src/controllers/userController.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "disableUser is defined in src/controllers/userController.ts."
+        ],
+        "mustNotClaim": [
+          "disableUser is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/controllers/userController.ts contains the disableUser definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "disable-user-def",
+            "kind": "file",
+            "label": "disableUser definition",
+            "path": "src/controllers/userController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-find-book-by-id",
+      "repoId": "small-typescript",
+      "intent": "Where is findBookById defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "findBookById is defined in src/repositories/bookRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/bookRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "findBookById is defined in src/repositories/bookRepository.ts."
+        ],
+        "mustNotClaim": [
+          "findBookById is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/bookRepository.ts contains the findBookById definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "find-book-by-id-def",
+            "kind": "file",
+            "label": "findBookById definition",
+            "path": "src/repositories/bookRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 34
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-find-by-tag",
+      "repoId": "small-typescript",
+      "intent": "Where is findByTag defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "findByTag is defined in src/controllers/bookController.ts.",
+        "mustIncludeFiles": [
+          "src/controllers/bookController.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "findByTag is defined in src/controllers/bookController.ts."
+        ],
+        "mustNotClaim": [
+          "findByTag is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/controllers/bookController.ts contains the findByTag definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "find-by-tag-def",
+            "kind": "file",
+            "label": "findByTag definition",
+            "path": "src/controllers/bookController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 25
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-find-loan-by-id",
+      "repoId": "small-typescript",
+      "intent": "Where is findLoanById defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "findLoanById is defined in src/repositories/loanRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/loanRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "findLoanById is defined in src/repositories/loanRepository.ts."
+        ],
+        "mustNotClaim": [
+          "findLoanById is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/loanRepository.ts contains the findLoanById definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "find-loan-by-id-def",
+            "kind": "file",
+            "label": "findLoanById definition",
+            "path": "src/repositories/loanRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-find-user-by-email",
+      "repoId": "small-typescript",
+      "intent": "Where is findUserByEmail defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "findUserByEmail is defined in src/repositories/userRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/userRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "findUserByEmail is defined in src/repositories/userRepository.ts."
+        ],
+        "mustNotClaim": [
+          "findUserByEmail is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/userRepository.ts contains the findUserByEmail definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "find-user-by-email-def",
+            "kind": "file",
+            "label": "findUserByEmail definition",
+            "path": "src/repositories/userRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-find-user-by-id",
+      "repoId": "small-typescript",
+      "intent": "Where is findUserById defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "findUserById is defined in src/repositories/userRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/userRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "findUserById is defined in src/repositories/userRepository.ts."
+        ],
+        "mustNotClaim": [
+          "findUserById is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/userRepository.ts contains the findUserById definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "find-user-by-id-def",
+            "kind": "file",
+            "label": "findUserById definition",
+            "path": "src/repositories/userRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-get-book",
+      "repoId": "small-typescript",
+      "intent": "Where is getBook defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "getBook is defined in src/services/bookService.ts.",
+        "mustIncludeFiles": [
+          "src/services/bookService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "getBook is defined in src/services/bookService.ts."
+        ],
+        "mustNotClaim": [
+          "getBook is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/bookService.ts contains the getBook definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "get-book-def",
+            "kind": "file",
+            "label": "getBook definition",
+            "path": "src/services/bookService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 44
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-get-db",
+      "repoId": "small-typescript",
+      "intent": "Where is getDb defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "getDb is defined in src/data/db.ts.",
+        "mustIncludeFiles": [
+          "src/data/db.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "getDb is defined in src/data/db.ts."
+        ],
+        "mustNotClaim": [
+          "getDb is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/data/db.ts contains the getDb definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "get-db-def",
+            "kind": "file",
+            "label": "getDb definition",
+            "path": "src/data/db.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 20
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-get-session",
+      "repoId": "small-typescript",
+      "intent": "Where is getSession defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "getSession is defined in src/auth/sessionStore.ts.",
+        "mustIncludeFiles": [
+          "src/auth/sessionStore.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "getSession is defined in src/auth/sessionStore.ts."
+        ],
+        "mustNotClaim": [
+          "getSession is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth/sessionStore.ts contains the getSession definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "get-session-def",
+            "kind": "file",
+            "label": "getSession definition",
+            "path": "src/auth/sessionStore.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-is-past",
+      "repoId": "small-typescript",
+      "intent": "Where is isPast defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "isPast is defined in src/utils/date.ts.",
+        "mustIncludeFiles": [
+          "src/utils/date.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "isPast is defined in src/utils/date.ts."
+        ],
+        "mustNotClaim": [
+          "isPast is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils/date.ts contains the isPast definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "is-past-def",
+            "kind": "file",
+            "label": "isPast definition",
+            "path": "src/utils/date.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-is-session-expired",
+      "repoId": "small-typescript",
+      "intent": "Where is isSessionExpired defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "isSessionExpired is defined in src/auth/sessionStore.ts.",
+        "mustIncludeFiles": [
+          "src/auth/sessionStore.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "isSessionExpired is defined in src/auth/sessionStore.ts."
+        ],
+        "mustNotClaim": [
+          "isSessionExpired is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth/sessionStore.ts contains the isSessionExpired definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "is-session-expired-def",
+            "kind": "file",
+            "label": "isSessionExpired definition",
+            "path": "src/auth/sessionStore.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-list-active",
+      "repoId": "small-typescript",
+      "intent": "Where is listActive defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "listActive is defined in src/services/userService.ts.",
+        "mustIncludeFiles": [
+          "src/services/userService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "listActive is defined in src/services/userService.ts."
+        ],
+        "mustNotClaim": [
+          "listActive is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/userService.ts contains the listActive definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "list-active-def",
+            "kind": "file",
+            "label": "listActive definition",
+            "path": "src/services/userService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 30
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-list-active-users",
+      "repoId": "small-typescript",
+      "intent": "Where is listActiveUsers defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "listActiveUsers is defined in src/repositories/userRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/userRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "listActiveUsers is defined in src/repositories/userRepository.ts."
+        ],
+        "mustNotClaim": [
+          "listActiveUsers is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/userRepository.ts contains the listActiveUsers definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "list-active-users-def",
+            "kind": "file",
+            "label": "listActiveUsers definition",
+            "path": "src/repositories/userRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-list-loans-by-user",
+      "repoId": "small-typescript",
+      "intent": "Where is listLoansByUser defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "listLoansByUser is defined in src/repositories/loanRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/loanRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "listLoansByUser is defined in src/repositories/loanRepository.ts."
+        ],
+        "mustNotClaim": [
+          "listLoansByUser is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/loanRepository.ts contains the listLoansByUser definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "list-loans-by-user-def",
+            "kind": "file",
+            "label": "listLoansByUser definition",
+            "path": "src/repositories/loanRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-list-open-loans",
+      "repoId": "small-typescript",
+      "intent": "Where is listOpenLoans defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "listOpenLoans is defined in src/repositories/loanRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/loanRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "listOpenLoans is defined in src/repositories/loanRepository.ts."
+        ],
+        "mustNotClaim": [
+          "listOpenLoans is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/loanRepository.ts contains the listOpenLoans definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "list-open-loans-def",
+            "kind": "file",
+            "label": "listOpenLoans definition",
+            "path": "src/repositories/loanRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-list-overdue-loans",
+      "repoId": "small-typescript",
+      "intent": "Where is listOverdueLoans defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "listOverdueLoans is defined in src/services/loanService.ts.",
+        "mustIncludeFiles": [
+          "src/services/loanService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "listOverdueLoans is defined in src/services/loanService.ts."
+        ],
+        "mustNotClaim": [
+          "listOverdueLoans is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/loanService.ts contains the listOverdueLoans definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "list-overdue-loans-def",
+            "kind": "file",
+            "label": "listOverdueLoans definition",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 63
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-loan",
+      "repoId": "small-typescript",
+      "intent": "Where is Loan defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Loan is defined in src/types.ts.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Loan is defined in src/types.ts."
+        ],
+        "mustNotClaim": [
+          "Loan is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/types.ts contains the Loan definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-def",
+            "kind": "file",
+            "label": "Loan definition",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 51
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-loan-decision",
+      "repoId": "small-typescript",
+      "intent": "Where is LoanDecision defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "LoanDecision is defined in src/policy/loanPolicy.ts.",
+        "mustIncludeFiles": [
+          "src/policy/loanPolicy.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "LoanDecision is defined in src/policy/loanPolicy.ts."
+        ],
+        "mustNotClaim": [
+          "LoanDecision is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/policy/loanPolicy.ts contains the LoanDecision definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "loan-decision-def",
+            "kind": "file",
+            "label": "LoanDecision definition",
+            "path": "src/policy/loanPolicy.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-log-info",
+      "repoId": "small-typescript",
+      "intent": "Where is logInfo defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "logInfo is defined in src/utils/logger.ts.",
+        "mustIncludeFiles": [
+          "src/utils/logger.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "logInfo is defined in src/utils/logger.ts."
+        ],
+        "mustNotClaim": [
+          "logInfo is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils/logger.ts contains the logInfo definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "log-info-def",
+            "kind": "file",
+            "label": "logInfo definition",
+            "path": "src/utils/logger.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 10
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-next-id",
+      "repoId": "small-typescript",
+      "intent": "Where is nextId defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "nextId is defined in src/utils/id.ts.",
+        "mustIncludeFiles": [
+          "src/utils/id.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "nextId is defined in src/utils/id.ts."
+        ],
+        "mustNotClaim": [
+          "nextId is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils/id.ts contains the nextId definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "next-id-def",
+            "kind": "file",
+            "label": "nextId definition",
+            "path": "src/utils/id.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 7
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-not-found-error",
+      "repoId": "small-typescript",
+      "intent": "Where is NotFoundError defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "NotFoundError is defined in src/errors.ts.",
+        "mustIncludeFiles": [
+          "src/errors.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "NotFoundError is defined in src/errors.ts."
+        ],
+        "mustNotClaim": [
+          "NotFoundError is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/errors.ts contains the NotFoundError definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "not-found-error-def",
+            "kind": "file",
+            "label": "NotFoundError definition",
+            "path": "src/errors.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 35
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-now-iso",
+      "repoId": "small-typescript",
+      "intent": "Where is nowIso defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "nowIso is defined in src/utils/date.ts.",
+        "mustIncludeFiles": [
+          "src/utils/date.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "nowIso is defined in src/utils/date.ts."
+        ],
+        "mustNotClaim": [
+          "nowIso is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils/date.ts contains the nowIso definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "now-iso-def",
+            "kind": "file",
+            "label": "nowIso definition",
+            "path": "src/utils/date.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-overdue-entry",
+      "repoId": "small-typescript",
+      "intent": "Where is OverdueEntry defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "OverdueEntry is defined in src/reporting/overdueReport.ts.",
+        "mustIncludeFiles": [
+          "src/reporting/overdueReport.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "OverdueEntry is defined in src/reporting/overdueReport.ts."
+        ],
+        "mustNotClaim": [
+          "OverdueEntry is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/reporting/overdueReport.ts contains the OverdueEntry definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "overdue-entry-def",
+            "kind": "file",
+            "label": "OverdueEntry definition",
+            "path": "src/reporting/overdueReport.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 32
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-overdue-report",
+      "repoId": "small-typescript",
+      "intent": "Where is overdueReport defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "overdueReport is defined in src/controllers/loanController.ts.",
+        "mustIncludeFiles": [
+          "src/controllers/loanController.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "overdueReport is defined in src/controllers/loanController.ts."
+        ],
+        "mustNotClaim": [
+          "overdueReport is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/controllers/loanController.ts contains the overdueReport definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "overdue-report-def",
+            "kind": "file",
+            "label": "overdueReport definition",
+            "path": "src/controllers/loanController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 23
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-policy-error",
+      "repoId": "small-typescript",
+      "intent": "Where is PolicyError defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "PolicyError is defined in src/errors.ts.",
+        "mustIncludeFiles": [
+          "src/errors.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "PolicyError is defined in src/errors.ts."
+        ],
+        "mustNotClaim": [
+          "PolicyError is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/errors.ts contains the PolicyError definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "policy-error-def",
+            "kind": "file",
+            "label": "PolicyError definition",
+            "path": "src/errors.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 35
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-rate-limit-error",
+      "repoId": "small-typescript",
+      "intent": "Where is RateLimitError defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "RateLimitError is defined in src/errors.ts.",
+        "mustIncludeFiles": [
+          "src/errors.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "RateLimitError is defined in src/errors.ts."
+        ],
+        "mustNotClaim": [
+          "RateLimitError is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/errors.ts contains the RateLimitError definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "rate-limit-error-def",
+            "kind": "file",
+            "label": "RateLimitError definition",
+            "path": "src/errors.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 35
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-rate-limit-state",
+      "repoId": "small-typescript",
+      "intent": "Where is RateLimitState defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "RateLimitState is defined in src/types.ts.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "RateLimitState is defined in src/types.ts."
+        ],
+        "mustNotClaim": [
+          "RateLimitState is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/types.ts contains the RateLimitState definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "rate-limit-state-def",
+            "kind": "file",
+            "label": "RateLimitState definition",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 51
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-record-audit",
+      "repoId": "small-typescript",
+      "intent": "Where is recordAudit defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "recordAudit is defined in src/services/auditService.ts.",
+        "mustIncludeFiles": [
+          "src/services/auditService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "recordAudit is defined in src/services/auditService.ts."
+        ],
+        "mustNotClaim": [
+          "recordAudit is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/auditService.ts contains the recordAudit definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "record-audit-def",
+            "kind": "file",
+            "label": "recordAudit definition",
+            "path": "src/services/auditService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 22
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-register-user",
+      "repoId": "small-typescript",
+      "intent": "Where is registerUser defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "registerUser is defined in src/services/userService.ts.",
+        "mustIncludeFiles": [
+          "src/services/userService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "registerUser is defined in src/services/userService.ts."
+        ],
+        "mustNotClaim": [
+          "registerUser is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/userService.ts contains the registerUser definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "register-user-def",
+            "kind": "file",
+            "label": "registerUser definition",
+            "path": "src/services/userService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 30
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-require-role",
+      "repoId": "small-typescript",
+      "intent": "Where is requireRole defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "requireRole is defined in src/auth/auth.ts.",
+        "mustIncludeFiles": [
+          "src/auth/auth.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "requireRole is defined in src/auth/auth.ts."
+        ],
+        "mustNotClaim": [
+          "requireRole is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth/auth.ts contains the requireRole definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "require-role-def",
+            "kind": "file",
+            "label": "requireRole definition",
+            "path": "src/auth/auth.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 24
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-return-book",
+      "repoId": "small-typescript",
+      "intent": "Where is returnBook defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "returnBook is defined in src/services/loanService.ts.",
+        "mustIncludeFiles": [
+          "src/services/loanService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "returnBook is defined in src/services/loanService.ts."
+        ],
+        "mustNotClaim": [
+          "returnBook is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/loanService.ts contains the returnBook definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "return-book-def",
+            "kind": "file",
+            "label": "returnBook definition",
+            "path": "src/services/loanService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 63
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-revoke-session",
+      "repoId": "small-typescript",
+      "intent": "Where is revokeSession defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "revokeSession is defined in src/auth/sessionStore.ts.",
+        "mustIncludeFiles": [
+          "src/auth/sessionStore.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "revokeSession is defined in src/auth/sessionStore.ts."
+        ],
+        "mustNotClaim": [
+          "revokeSession is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth/sessionStore.ts contains the revokeSession definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "revoke-session-def",
+            "kind": "file",
+            "label": "revokeSession definition",
+            "path": "src/auth/sessionStore.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-role",
+      "repoId": "small-typescript",
+      "intent": "Where is Role defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Role is defined in src/types.ts.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Role is defined in src/types.ts."
+        ],
+        "mustNotClaim": [
+          "Role is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/types.ts contains the Role definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "role-def",
+            "kind": "file",
+            "label": "Role definition",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 51
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-role-order",
+      "repoId": "small-typescript",
+      "intent": "Where is ROLE_ORDER defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "ROLE_ORDER is defined in src/constants.ts.",
+        "mustIncludeFiles": [
+          "src/constants.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "ROLE_ORDER is defined in src/constants.ts."
+        ],
+        "mustNotClaim": [
+          "ROLE_ORDER is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/constants.ts contains the ROLE_ORDER definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "role-order-def",
+            "kind": "file",
+            "label": "ROLE_ORDER definition",
+            "path": "src/constants.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 6
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-role-allows",
+      "repoId": "small-typescript",
+      "intent": "Where is roleAllows defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "roleAllows is defined in src/auth/roles.ts.",
+        "mustIncludeFiles": [
+          "src/auth/roles.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "roleAllows is defined in src/auth/roles.ts."
+        ],
+        "mustNotClaim": [
+          "roleAllows is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth/roles.ts contains the roleAllows definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "role-allows-def",
+            "kind": "file",
+            "label": "roleAllows definition",
+            "path": "src/auth/roles.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 6
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-search-books-by-tag",
+      "repoId": "small-typescript",
+      "intent": "Where is searchBooksByTag defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "searchBooksByTag is defined in src/repositories/bookRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/bookRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "searchBooksByTag is defined in src/repositories/bookRepository.ts."
+        ],
+        "mustNotClaim": [
+          "searchBooksByTag is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/bookRepository.ts contains the searchBooksByTag definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "search-books-by-tag-def",
+            "kind": "file",
+            "label": "searchBooksByTag definition",
+            "path": "src/repositories/bookRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 34
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-search-by-tag",
+      "repoId": "small-typescript",
+      "intent": "Where is searchByTag defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "searchByTag is defined in src/services/bookService.ts.",
+        "mustIncludeFiles": [
+          "src/services/bookService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "searchByTag is defined in src/services/bookService.ts."
+        ],
+        "mustNotClaim": [
+          "searchByTag is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/bookService.ts contains the searchByTag definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "search-by-tag-def",
+            "kind": "file",
+            "label": "searchByTag definition",
+            "path": "src/services/bookService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 44
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-send-loan-receipt",
+      "repoId": "small-typescript",
+      "intent": "Where is sendLoanReceipt defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "sendLoanReceipt is defined in src/services/notificationService.ts.",
+        "mustIncludeFiles": [
+          "src/services/notificationService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "sendLoanReceipt is defined in src/services/notificationService.ts."
+        ],
+        "mustNotClaim": [
+          "sendLoanReceipt is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/notificationService.ts contains the sendLoanReceipt definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "send-loan-receipt-def",
+            "kind": "file",
+            "label": "sendLoanReceipt definition",
+            "path": "src/services/notificationService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 21
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-send-overdue-notice",
+      "repoId": "small-typescript",
+      "intent": "Where is sendOverdueNotice defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "sendOverdueNotice is defined in src/services/notificationService.ts.",
+        "mustIncludeFiles": [
+          "src/services/notificationService.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "sendOverdueNotice is defined in src/services/notificationService.ts."
+        ],
+        "mustNotClaim": [
+          "sendOverdueNotice is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/services/notificationService.ts contains the sendOverdueNotice definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "send-overdue-notice-def",
+            "kind": "file",
+            "label": "sendOverdueNotice definition",
+            "path": "src/services/notificationService.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 21
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-session",
+      "repoId": "small-typescript",
+      "intent": "Where is Session defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Session is defined in src/types.ts.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "Session is defined in src/types.ts."
+        ],
+        "mustNotClaim": [
+          "Session is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/types.ts contains the Session definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "session-def",
+            "kind": "file",
+            "label": "Session definition",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 51
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-update-book",
+      "repoId": "small-typescript",
+      "intent": "Where is updateBook defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "updateBook is defined in src/repositories/bookRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/bookRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "updateBook is defined in src/repositories/bookRepository.ts."
+        ],
+        "mustNotClaim": [
+          "updateBook is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/bookRepository.ts contains the updateBook definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "update-book-def",
+            "kind": "file",
+            "label": "updateBook definition",
+            "path": "src/repositories/bookRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 34
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-update-inventory",
+      "repoId": "small-typescript",
+      "intent": "Where is updateInventory defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "updateInventory is defined in src/controllers/bookController.ts.",
+        "mustIncludeFiles": [
+          "src/controllers/bookController.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "updateInventory is defined in src/controllers/bookController.ts."
+        ],
+        "mustNotClaim": [
+          "updateInventory is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/controllers/bookController.ts contains the updateInventory definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "update-inventory-def",
+            "kind": "file",
+            "label": "updateInventory definition",
+            "path": "src/controllers/bookController.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 25
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-update-loan",
+      "repoId": "small-typescript",
+      "intent": "Where is updateLoan defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "updateLoan is defined in src/repositories/loanRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/loanRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "updateLoan is defined in src/repositories/loanRepository.ts."
+        ],
+        "mustNotClaim": [
+          "updateLoan is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/loanRepository.ts contains the updateLoan definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "update-loan-def",
+            "kind": "file",
+            "label": "updateLoan definition",
+            "path": "src/repositories/loanRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-update-user",
+      "repoId": "small-typescript",
+      "intent": "Where is updateUser defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "updateUser is defined in src/repositories/userRepository.ts.",
+        "mustIncludeFiles": [
+          "src/repositories/userRepository.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "updateUser is defined in src/repositories/userRepository.ts."
+        ],
+        "mustNotClaim": [
+          "updateUser is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/repositories/userRepository.ts contains the updateUser definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "update-user-def",
+            "kind": "file",
+            "label": "updateUser definition",
+            "path": "src/repositories/userRepository.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 39
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-user",
+      "repoId": "small-typescript",
+      "intent": "Where is User defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "User is defined in src/types.ts.",
+        "mustIncludeFiles": [
+          "src/types.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "User is defined in src/types.ts."
+        ],
+        "mustNotClaim": [
+          "User is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/types.ts contains the User definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "user-def",
+            "kind": "file",
+            "label": "User definition",
+            "path": "src/types.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 51
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "st-symbol-validation-error",
+      "repoId": "small-typescript",
+      "intent": "Where is ValidationError defined in the small-typescript repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "ValidationError is defined in src/errors.ts.",
+        "mustIncludeFiles": [
+          "src/errors.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "ValidationError is defined in src/errors.ts."
+        ],
+        "mustNotClaim": [
+          "ValidationError is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/errors.ts contains the ValidationError definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "validation-error-def",
+            "kind": "file",
+            "label": "ValidationError definition",
+            "path": "src/errors.ts",
+            "location": {
+              "startLine": 1,
+              "endLine": 35
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    }
+  ]
+}

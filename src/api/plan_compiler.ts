@@ -43,6 +43,7 @@ import {
   type CompositionSelectionMode,
   type CompositionSelectionOptions,
 } from './composition_selector.js';
+import { selectTechniqueCompositionsByKeyword } from './composition_keywords.js';
 import { ProviderUnavailableError } from './provider_check.js';
 import { runAdequacyScan, type AdequacyReport, type AdequacyRequirement } from './difficulty_detectors.js';
 
@@ -56,27 +57,6 @@ function sanitizeId(value: unknown): string {
   return value.replace(SAFE_ID_PATTERN, '_').slice(0, 120);
 }
 
-const COMPOSITION_KEYWORDS: Record<string, string[]> = {
-  tc_agentic_review_v1: ['review', 'audit', 'code review', 'risk review'],
-  tc_root_cause_recovery: ['root cause', 'failure', 'incident', 'bug', 'regression'],
-  tc_release_readiness: ['release', 'rollout', 'deploy', 'migration'],
-  tc_repo_rehab_triage: ['rehab', 'triage', 'stabilize', 'legacy', 'debt'],
-  tc_performance_reliability: ['performance', 'latency', 'throughput', 'scaling'],
-  tc_security_review: ['security', 'threat', 'abuse', 'vulnerability', 'audit'],
-  tc_ux_discovery: ['ux', 'user journey', 'usability', 'onboarding', 'experience'],
-  tc_scaling_readiness: ['scaling readiness', 'capacity', 'throughput', 'scale'],
-  tc_social_platform: ['social platform', 'social', 'community', 'feed', 'sharing'],
-  tc_video_platform: ['video platform', 'video', 'streaming', 'media'],
-  tc_industrial_backend: ['industrial', 'backend', 'logistics', 'operations', 'pipeline'],
-  tc_developer_tool: ['developer tool', 'devtool', 'cli', 'sdk', 'framework'],
-  tc_dashboard: ['dashboard', 'analytics', 'admin', 'reporting'],
-  tc_landing_page: ['landing page', 'marketing site', 'homepage'],
-  tc_payment_system: ['payment', 'billing', 'checkout', 'subscription'],
-  tc_e_commerce: ['e-commerce', 'commerce', 'store', 'cart'],
-  tc_search_system: ['search', 'query', 'indexing', 'ranking'],
-  tc_notification: ['notification', 'email', 'sms', 'push'],
-};
-
 export interface PlanWorkOptions extends CompositionSelectionOptions {
   target?: string;
   taskType?: string;
@@ -88,6 +68,7 @@ export interface PlanWorkOptions extends CompositionSelectionOptions {
   workspaceRoot?: string;
   adequacyReport?: AdequacyReport | null;
   enableAdequacyScan?: boolean;
+  compositionId?: string;
 }
 
 export interface PlanWorkResult {
@@ -106,11 +87,7 @@ export function selectTechniqueCompositions(
   intent: string,
   compositions: TechniqueComposition[] = DEFAULT_TECHNIQUE_COMPOSITIONS
 ): TechniqueComposition[] {
-  const normalized = intent.toLowerCase();
-  return compositions.filter((composition) => {
-    const keywords = COMPOSITION_KEYWORDS[composition.id];
-    return keywords ? keywords.some((keyword) => normalized.includes(keyword)) : false;
-  });
+  return selectTechniqueCompositionsByKeyword(intent, compositions);
 }
 
 export function selectMethods(
@@ -120,16 +97,20 @@ export function selectMethods(
   return selectTechniqueCompositions(intent, compositions);
 }
 
-function isProviderUnavailable(error: unknown): boolean {
-  if (!error) return false;
-  if (error instanceof ProviderUnavailableError) return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('unverified_by_trace(provider_unavailable)');
-}
-
 function logSelectionFallback(intent: string, reason: string): void {
   const safeIntent = intent.replace(/\s+/g, ' ').trim().slice(0, 200);
   console.warn(`[librarian] Composition selection fallback: ${reason}. intent="${safeIntent}"`);
+}
+
+function shouldFallbackToKeyword(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof ProviderUnavailableError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('unverified_by_trace(provider_unavailable)') ||
+    message.includes('unverified_by_trace(embedding_request_failed)') ||
+    message.includes('unverified_by_trace(embedding_redaction_blocked)')
+  );
 }
 
 export async function selectTechniqueCompositionsFromStorage(
@@ -139,7 +120,7 @@ export async function selectTechniqueCompositionsFromStorage(
 ): Promise<TechniqueComposition[]> {
   const compositions = await ensureTechniqueCompositions(storage);
   const selectionMode: CompositionSelectionMode = options.selectionMode ?? 'semantic';
-  const allowKeywordFallback = options.allowKeywordFallback ?? false;
+  const allowKeywordFallback = options.allowKeywordFallback ?? true;
   let selections: TechniqueComposition[] = [];
   let recommendations: LearnedRecommendations | null = null;
   if (options.useLearning !== false) {
@@ -167,7 +148,7 @@ export async function selectTechniqueCompositionsFromStorage(
       });
       selections = matches.map((match) => match.composition);
     } catch (error) {
-      if (isProviderUnavailable(error) || !allowKeywordFallback) {
+      if (!allowKeywordFallback || !shouldFallbackToKeyword(error)) {
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -527,17 +508,7 @@ export async function planWorkFromIntent(
   intent: string,
   options: PlanWorkOptions = {}
 ): Promise<PlanWorkResult[]> {
-  const compositions = await selectTechniqueCompositionsFromStorage(storage, intent, {
-    useLearning: options.useLearning,
-    selectionMode: options.selectionMode,
-    maxResults: options.maxResults,
-    minConfidence: options.minConfidence,
-    includeAlternatives: options.includeAlternatives,
-    alternativesLimit: options.alternativesLimit,
-    includeIntentEmbedding: options.includeIntentEmbedding,
-    allowKeywordFallback: options.allowKeywordFallback,
-    providerCheck: options.providerCheck,
-  });
+  const compositions = await resolveCompositionsForPlan(storage, intent, options);
   const primitives = await ensureTechniquePrimitives(storage);
   const target = options.target ?? intent;
   return compositions.map((composition) => planWorkFromComposition(composition, primitives, {
@@ -552,7 +523,33 @@ export async function planWorkFromIntentWithContext(
   context: LibrarianResponse,
   options: PlanWorkOptions = {}
 ): Promise<PlanWorkResult[]> {
-  const compositions = await selectTechniqueCompositionsFromStorage(storage, intent, {
+  const compositions = await resolveCompositionsForPlan(storage, intent, options);
+  const primitives = await ensureTechniquePrimitives(storage);
+  const target = options.target ?? intent;
+  return compositions.map((composition) =>
+    planWorkFromCompositionWithContext(composition, primitives, context, {
+      ...options,
+      target,
+    })
+  );
+}
+
+async function resolveCompositionsForPlan(
+  storage: LibrarianStorage,
+  intent: string,
+  options: PlanWorkOptions
+): Promise<TechniqueComposition[]> {
+  if (options.compositionId) {
+    const compositions = await ensureTechniqueCompositions(storage);
+    const match = compositions.find((composition) => composition.id === options.compositionId);
+    if (!match) {
+      const safeId = sanitizeId(options.compositionId);
+      throw new Error(`unverified_by_trace(composition_missing): ${safeId}`);
+    }
+    return [match];
+  }
+
+  return selectTechniqueCompositionsFromStorage(storage, intent, {
     useLearning: options.useLearning,
     selectionMode: options.selectionMode,
     maxResults: options.maxResults,
@@ -563,14 +560,6 @@ export async function planWorkFromIntentWithContext(
     allowKeywordFallback: options.allowKeywordFallback,
     providerCheck: options.providerCheck,
   });
-  const primitives = await ensureTechniquePrimitives(storage);
-  const target = options.target ?? intent;
-  return compositions.map((composition) =>
-    planWorkFromCompositionWithContext(composition, primitives, context, {
-      ...options,
-      target,
-    })
-  );
 }
 
 function createPrototypeVerificationPlans(

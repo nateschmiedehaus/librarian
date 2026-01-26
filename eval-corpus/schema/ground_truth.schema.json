@@ -1,0 +1,225 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GroundTruthCorpus",
+  "description": "Corpus-level ground truth index for evaluation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "repos", "queries"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "SemVer identifier for the corpus content."
+    },
+    "repos": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/RepoManifest" }
+    },
+    "queries": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/GroundTruthQuery" }
+    },
+    "notes": { "type": "string" }
+  },
+  "definitions": {
+    "RepoManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repoId",
+        "name",
+        "languages",
+        "fileCount",
+        "annotationLevel",
+        "characteristics"
+      ],
+      "properties": {
+        "repoId": { "type": "string" },
+        "name": { "type": "string" },
+        "languages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "fileCount": { "type": "integer", "minimum": 0 },
+        "annotationLevel": {
+          "type": "string",
+          "enum": ["full", "partial", "sparse"]
+        },
+        "characteristics": { "$ref": "#/definitions/RepoCharacteristics" }
+      }
+    },
+    "RepoCharacteristics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentationDensity",
+        "testCoverage",
+        "architecturalClarity",
+        "codeQuality"
+      ],
+      "properties": {
+        "documentationDensity": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "testCoverage": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "architecturalClarity": {
+          "type": "string",
+          "enum": ["clear", "moderate", "complex"]
+        },
+        "codeQuality": {
+          "type": "string",
+          "enum": ["clean", "average", "legacy"]
+        }
+      }
+    },
+    "GroundTruthQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "queryId",
+        "repoId",
+        "intent",
+        "category",
+        "difficulty",
+        "correctAnswer",
+        "lastVerified",
+        "verifiedBy"
+      ],
+      "properties": {
+        "queryId": { "type": "string" },
+        "repoId": { "type": "string" },
+        "intent": { "type": "string" },
+        "category": {
+          "type": "string",
+          "enum": ["structural", "behavioral", "architectural", "impact", "security"]
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["trivial", "moderate", "hard", "research"]
+        },
+        "correctAnswer": { "$ref": "#/definitions/CorrectAnswer" },
+        "lastVerified": { "type": "string", "format": "date" },
+        "verifiedBy": { "type": "string" },
+        "verificationNotes": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "CorrectAnswer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "mustIncludeFiles",
+        "shouldIncludeFiles",
+        "mustIncludeFacts",
+        "mustNotClaim",
+        "acceptableVariations",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "summary": { "type": "string" },
+        "mustIncludeFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "shouldIncludeFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "mustIncludeFacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "mustNotClaim": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "acceptableVariations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/EvidenceRef" }
+        },
+        "evidenceLinks": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/EvidenceLink" }
+        }
+      }
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["refId", "kind", "label"],
+      "properties": {
+        "refId": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "file",
+            "annotation",
+            "doc",
+            "test",
+            "commit",
+            "issue",
+            "runtime",
+            "external"
+          ]
+        },
+        "label": { "type": "string" },
+        "path": { "type": "string" },
+        "uri": { "type": "string", "format": "uri" },
+        "ref": { "type": "string" },
+        "location": { "$ref": "#/definitions/EvidenceLocation" },
+        "excerpt": { "type": "string" },
+        "hash": { "type": "string" },
+        "notes": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "anyOf": [
+        { "required": ["path"] },
+        { "required": ["uri"] },
+        { "required": ["ref"] }
+      ]
+    },
+    "EvidenceLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startLine"],
+      "properties": {
+        "startLine": { "type": "integer", "minimum": 1 },
+        "endLine": { "type": "integer", "minimum": 1 },
+        "startColumn": { "type": "integer", "minimum": 1 },
+        "endColumn": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "EvidenceLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "refIds"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["summary", "fact", "file", "variation", "note"]
+        },
+        "target": { "type": "string" },
+        "refIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

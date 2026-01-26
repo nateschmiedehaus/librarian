@@ -647,6 +647,47 @@ export interface LibrarianResponse {
   feedbackToken?: string;
 }
 
+export interface OutputEnvelope {
+  constructionPlan: ConstructionPlan;
+  packs: ContextPack[];
+  adequacy: AdequacyReport | null;
+  verificationPlan: VerificationPlan | null;
+  disclosures: string[];
+  traceId: string;
+}
+
+export function ensureOutputEnvelope(response: LibrarianResponse): LibrarianResponse & OutputEnvelope {
+  const disclosures = new Set(response.disclosures ?? []);
+  let constructionPlan = response.constructionPlan;
+  if (!constructionPlan) {
+    disclosures.add('unverified_by_trace(construction_plan_missing)');
+    constructionPlan = {
+      id: 'cp_unverified',
+      templateId: 'T1',
+      ucIds: [],
+      intent: response.query?.intent ?? '',
+      source: 'default',
+      createdAt: new Date().toISOString(),
+    };
+  }
+  const adequacy = response.adequacy ?? null;
+  if (!response.adequacy) {
+    disclosures.add('unverified_by_trace(adequacy_missing)');
+  }
+  const verificationPlan = response.verificationPlan ?? null;
+  if (!response.verificationPlan) {
+    disclosures.add('unverified_by_trace(verification_plan_missing)');
+  }
+
+  return {
+    ...response,
+    constructionPlan,
+    adequacy,
+    verificationPlan,
+    disclosures: Array.from(disclosures),
+  };
+}
+
 /**
  * LLM-synthesized response from query knowledge.
  * Represents the understanding produced by synthesizing retrieved context.
@@ -986,4 +1027,8 @@ export interface LibrarianEvent {
   type: LibrarianEventType;
   timestamp: Date;
   data: Record<string, unknown>;
+  /** Correlation ID for multi-agent coordination (session/run) */
+  sessionId?: string;
+  /** Optional cross-system correlation ID */
+  correlationId?: string;
 }

@@ -56,6 +56,7 @@ import { deriveSelfDiagnosis, type SelfDiagnosis } from './self_diagnosis.js';
 import type { VerificationPlan } from '../strategic/verification_plan.js';
 import type { Episode } from '../strategic/building_blocks.js';
 import { SqliteEvidenceLedger } from '../epistemics/evidence_ledger.js';
+import { enableEventLedgerBridge, disableEventLedgerBridge } from '../epistemics/event_ledger_bridge.js';
 import {
   listVerificationPlans,
   getVerificationPlan,
@@ -225,6 +226,7 @@ export class Librarian {
       const ledgerPath = path.join(librarianRoot, 'evidence_ledger.db');
       this.evidenceLedger = new SqliteEvidenceLedger(ledgerPath);
       await this.evidenceLedger.initialize();
+      enableEventLedgerBridge({ ledger: this.evidenceLedger });
     } catch (error) {
       this.evidenceLedger = null;
       logWarning('Evidence ledger initialization failed; replay unavailable.', {
@@ -1070,6 +1072,7 @@ export class Librarian {
     }
 
     if (this.evidenceLedger) {
+      disableEventLedgerBridge();
       await this.evidenceLedger.close();
       this.evidenceLedger = null;
     }

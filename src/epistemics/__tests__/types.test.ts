@@ -12,8 +12,8 @@ import { describe, it, expect } from 'vitest';
 import {
   EVIDENCE_GRAPH_SCHEMA_VERSION,
   createClaimId,
-  createDefaultConfidence,
-  computeOverallConfidence,
+  createDefaultSignalStrength,
+  computeOverallSignalStrength,
   createEmptyEvidenceGraph,
   createClaim,
   createDefeater,
@@ -31,8 +31,9 @@ import {
   type ExtendedDefeater,
   type Contradiction,
   type EvidenceGraph,
-  type DecomposedConfidence,
+  type ClaimSignalStrength,
 } from '../types.js';
+import { absent, deterministic } from '../confidence.js';
 
 describe('Evidence Graph Types', () => {
   describe('Schema Version', () => {
@@ -57,9 +58,9 @@ describe('Evidence Graph Types', () => {
     });
   });
 
-  describe('DecomposedConfidence', () => {
-    it('should create default confidence with balanced values', () => {
-      const conf = createDefaultConfidence();
+  describe('ClaimSignalStrength', () => {
+    it('should create default signal strength with balanced values', () => {
+      const conf = createDefaultSignalStrength();
       expect(conf.overall).toBe(0.5);
       expect(conf.retrieval).toBe(0.5);
       expect(conf.structural).toBe(0.5);
@@ -69,8 +70,8 @@ describe('Evidence Graph Types', () => {
       expect(conf.aggregationMethod).toBe('geometric_mean');
     });
 
-    it('should compute overall confidence using geometric mean', () => {
-      const conf: Omit<DecomposedConfidence, 'overall'> = {
+    it('should compute overall signal strength using geometric mean', () => {
+      const conf: Omit<ClaimSignalStrength, 'overall'> = {
         retrieval: 0.9,
         structural: 0.8,
         semantic: 0.7,
@@ -78,7 +79,7 @@ describe('Evidence Graph Types', () => {
         recency: 0.5,
         aggregationMethod: 'geometric_mean',
       };
-      const overall = computeOverallConfidence(conf);
+      const overall = computeOverallSignalStrength(conf);
 
       // Geometric mean of [0.9, 0.8, 0.7, 0.6, 0.5] = (0.9*0.8*0.7*0.6*0.5)^(1/5)
       const expected = Math.pow(0.9 * 0.8 * 0.7 * 0.6 * 0.5, 1 / 5);
@@ -87,7 +88,7 @@ describe('Evidence Graph Types', () => {
 
     it('should handle edge cases in confidence computation', () => {
       // All 1s
-      const allOnes = computeOverallConfidence({
+      const allOnes = computeOverallSignalStrength({
         retrieval: 1,
         structural: 1,
         semantic: 1,
@@ -98,7 +99,7 @@ describe('Evidence Graph Types', () => {
       expect(allOnes).toBe(1);
 
       // All 0s
-      const allZeros = computeOverallConfidence({
+      const allZeros = computeOverallSignalStrength({
         retrieval: 0,
         structural: 0,
         semantic: 0,
@@ -138,29 +139,42 @@ describe('Evidence Graph Types', () => {
       expect(claim.type).toBe('semantic');
       expect(claim.status).toBe('active');
       expect(claim.schemaVersion).toBe(EVIDENCE_GRAPH_SCHEMA_VERSION);
-      expect(claim.confidence.overall).toBeGreaterThan(0);
+      expect(claim.confidence.type).toBe('absent');
+      expect(claim.signalStrength.overall).toBeGreaterThan(0);
       expect(isClaim(claim)).toBe(true);
     });
 
-    it('should accept custom confidence values', () => {
+    it('should accept custom signal strength values', () => {
       const claim = createClaim({
         proposition: 'Test claim',
         type: 'quality',
         subject: { type: 'file', id: 'file_1', name: 'test.ts' },
         source: { type: 'static_analysis', id: 'eslint' },
-        confidence: {
+        signalStrength: {
           retrieval: 0.95,
           structural: 0.9,
           semantic: 0.85,
         },
       });
 
-      expect(claim.confidence.retrieval).toBe(0.95);
-      expect(claim.confidence.structural).toBe(0.9);
-      expect(claim.confidence.semantic).toBe(0.85);
+      expect(claim.signalStrength.retrieval).toBe(0.95);
+      expect(claim.signalStrength.structural).toBe(0.9);
+      expect(claim.signalStrength.semantic).toBe(0.85);
       // testExecution and recency should be default 0.5
-      expect(claim.confidence.testExecution).toBe(0.5);
-      expect(claim.confidence.recency).toBe(0.5);
+      expect(claim.signalStrength.testExecution).toBe(0.5);
+      expect(claim.signalStrength.recency).toBe(0.5);
+    });
+
+    it('should accept ConfidenceValue for claim confidence', () => {
+      const claim = createClaim({
+        proposition: 'Deterministic claim',
+        type: 'semantic',
+        subject: { type: 'file', id: 'file_2', name: 'test.ts' },
+        source: { type: 'static_analysis', id: 'eslint' },
+        confidence: deterministic(true, 'test_deterministic'),
+      });
+
+      expect(claim.confidence.type).toBe('deterministic');
     });
 
     it('should reject invalid claims in type guard', () => {
@@ -419,7 +433,8 @@ describe('Evidence Graph Types', () => {
           version: '2.0.0',
           traceId: 'trace_xyz',
         },
-        confidence: {
+        confidence: absent('uncalibrated'),
+        signalStrength: {
           retrieval: 0.92,
           structural: 0.88,
           semantic: 0.75,
@@ -439,7 +454,7 @@ describe('Evidence Graph Types', () => {
       expect(restored).toBeDefined();
       expect(restored?.proposition).toBe(claim.proposition);
       expect(restored?.source.traceId).toBe('trace_xyz');
-      expect(restored?.confidence.retrieval).toBe(0.92);
+      expect(restored?.signalStrength.retrieval).toBe(0.92);
     });
 
     it('should reject invalid evidence graphs', () => {

@@ -2,9 +2,9 @@
 
 Status: authoritative
 Scope: All typed artifacts and shared primitives used by Librarian.
-Last Verified: 2026-01-04
+Last Verified: 2026-01-26
 Owner: librarianship
-Version: 1.0.0
+Version: 1.1.0
 
 This document defines the canonical schemas for all Librarian artifacts, shared
 primitives, and integration contracts. All implementations must conform to these
@@ -189,6 +189,69 @@ interface ResultError {
 }
 
 type ResultOrError<T> = Result<T> | ResultError;
+```
+
+## Evaluation Artifacts
+
+### GroundTruthCorpus.v1
+```typescript
+interface GroundTruthCorpus {
+  version: string;              // SemVer identifier for corpus content
+  repos: RepoManifest[];
+  queries: GroundTruthQuery[];
+  notes?: string;
+}
+
+interface GroundTruthQuery {
+  queryId: string;
+  repoId: string;
+  intent: string;               // Natural language query intent
+  category: 'structural' | 'behavioral' | 'architectural' | 'impact' | 'security';
+  difficulty: 'trivial' | 'moderate' | 'hard' | 'research';
+  correctAnswer: CorrectAnswer;
+  lastVerified: string;         // ISO date
+  verifiedBy: string;
+  verificationNotes?: string;
+  tags?: string[];
+}
+
+interface CorrectAnswer {
+  summary: string;
+  mustIncludeFiles: string[];
+  shouldIncludeFiles: string[];
+  mustIncludeFacts: string[];
+  mustNotClaim: string[];
+  acceptableVariations: string[];
+  evidenceRefs: EvidenceRef[];
+  evidenceLinks?: EvidenceLink[];
+}
+
+interface EvidenceRef {
+  refId: string;                // Unique within the query
+  kind: 'file' | 'annotation' | 'doc' | 'test' | 'commit' | 'issue' | 'runtime' | 'external';
+  label: string;                // Short human label
+  path?: string;                // File path or repo-relative location
+  uri?: string;                 // External URI if not local
+  ref?: string;                 // Commit SHA, test ID, or external reference
+  location?: EvidenceLocation;  // Optional line/column info
+  excerpt?: string;             // Short evidence excerpt
+  hash?: string;                // Content hash if applicable
+  notes?: string;
+  tags?: string[];
+}
+
+interface EvidenceLocation {
+  startLine: number;
+  endLine?: number;
+  startColumn?: number;
+  endColumn?: number;
+}
+
+interface EvidenceLink {
+  kind?: 'summary' | 'fact' | 'file' | 'variation' | 'note';
+  target: string;               // Fact or file path that the evidence supports
+  refIds: string[];             // EvidenceRef.refId values
+}
 ```
 
 ## Integration Artifacts
@@ -416,6 +479,50 @@ interface SlopFinding {
   evidence: string;     // Code snippet or diff
   recommendation: string;
   confidence: 'high' | 'medium' | 'low';
+}
+```
+
+### GroundTruthCorpus.v1
+```typescript
+interface GroundTruthCorpus {
+  kind: 'GroundTruthCorpus.v1';
+  schemaVersion: 1;
+  version: string;
+  repos: RepoManifest[];
+  queries: GroundTruthQuery[];
+}
+
+interface RepoManifest {
+  repoId: string;
+  name: string;
+  languages: string[];
+  fileCount: number;
+  annotationLevel: 'full' | 'partial' | 'sparse';
+  characteristics: {
+    documentationDensity: 'high' | 'medium' | 'low';
+    testCoverage: 'high' | 'medium' | 'low';
+    architecturalClarity: 'clear' | 'moderate' | 'complex';
+    codeQuality: 'clean' | 'average' | 'legacy';
+  };
+}
+
+interface GroundTruthQuery {
+  queryId: string;
+  repoId: string;
+  intent: string;
+  category: 'structural' | 'behavioral' | 'architectural' | 'impact' | 'security';
+  difficulty: 'trivial' | 'moderate' | 'hard' | 'research';
+  correctAnswer: {
+    summary: string;
+    mustIncludeFiles: string[];
+    shouldIncludeFiles: string[];
+    mustIncludeFacts: string[];
+    mustNotClaim: string[];
+    acceptableVariations: string[];
+  };
+  lastVerified: string;       // ISO date
+  verifiedBy: string;
+  verificationNotes?: string;
 }
 ```
 

@@ -151,7 +151,7 @@ describe('plan compiler', () => {
     expect(ids).toContain(semanticComposition.id);
   });
 
-  it('throws on provider failure even with fallback', async () => {
+  it('falls back to keyword when provider unavailable and fallback enabled', async () => {
     const storage = new MockStorage();
     vi.spyOn(SemanticCompositionSelector.prototype, 'select').mockRejectedValue(
       new ProviderUnavailableError({
@@ -161,11 +161,12 @@ describe('plan compiler', () => {
       })
     );
 
-    await expect(selectTechniqueCompositionsFromStorage(
+    const selections = await selectTechniqueCompositionsFromStorage(
       storage as unknown as LibrarianStorage,
       'release prep',
       { selectionMode: 'semantic', allowKeywordFallback: true, useLearning: false }
-    )).rejects.toThrow(/provider_unavailable/);
+    );
+    expect(selections.map((item) => item.id)).toContain('tc_release_readiness');
   });
 
   it('falls back to keyword when semantic returns empty and fallback enabled', async () => {

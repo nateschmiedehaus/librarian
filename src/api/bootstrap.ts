@@ -128,6 +128,12 @@ interface WorkspaceFingerprint {
   git_head?: string;
 }
 
+interface BootstrapPhaseProgress {
+  total: number;
+  completed: number;
+  currentFile?: string;
+}
+
 interface BootstrapRecoveryState {
   kind: 'BootstrapRecoveryState.v1';
   schema_version: 1;
@@ -139,6 +145,7 @@ interface BootstrapRecoveryState {
   started_at: string;
   updated_at: string;
   workspace_fingerprint?: WorkspaceFingerprint;
+  phase_progress?: BootstrapPhaseProgress;
   last_error?: string;
 }
 
@@ -149,6 +156,8 @@ const bootstrapStates = new Map<string, BootstrapState>();
 
 const GOVERNOR_CONFIG_FILENAME = 'governor.json';
 const BOOTSTRAP_STATE_FILENAME = 'bootstrap_state.json';
+const BOOTSTRAP_CHECKPOINT_FILE_INTERVAL = 100;
+const BOOTSTRAP_CHECKPOINT_TIME_INTERVAL_MS = 5 * 60_000;
 const METHOD_PACK_PRELOAD_FAMILIES: MethodFamilyId[] = [
   'MF-01',
   'MF-02',
@@ -222,6 +231,9 @@ function isBootstrapRecoveryState(value: unknown): value is BootstrapRecoverySta
   if (value.workspace_fingerprint !== undefined && !isWorkspaceFingerprint(value.workspace_fingerprint)) {
     return false;
   }
+  if (value.phase_progress !== undefined && !isBootstrapPhaseProgress(value.phase_progress)) {
+    return false;
+  }
   return (
     typeof value.workspace === 'string' &&
     typeof value.version === 'string' &&
@@ -244,6 +256,15 @@ function isWorkspaceFingerprint(value: unknown): value is WorkspaceFingerprint {
     typeof value.file_count === 'number' &&
     typeof value.latest_mtime === 'number' &&
     (value.git_head === undefined || typeof value.git_head === 'string')
+  );
+}
+
+function isBootstrapPhaseProgress(value: unknown): value is BootstrapPhaseProgress {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.total === 'number' &&
+    typeof value.completed === 'number' &&
+    (value.currentFile === undefined || typeof value.currentFile === 'string')
   );
 }
 
@@ -341,6 +362,100 @@ async function resolveGitDir(workspace: string): Promise<string | null> {
     current = parent;
   }
   return null;
+}
+
+type BootstrapCheckpointSnapshot = {
+  phaseIndex: number;
+  phaseName: string;
+  progress: BootstrapPhaseProgress;
+};
+
+type BootstrapCheckpointWriter = {
+  update: (update: { phaseIndex: number; phaseName: string; progress: BootstrapPhaseProgress }) => Promise<void>;
+  flush: () => Promise<void>;
+  getSnapshot: () => BootstrapCheckpointSnapshot | null;
+};
+
+function normalizeCheckpointInterval(value: number | undefined, fallback: number): number {
+  if (value === 0) return Number.POSITIVE_INFINITY;
+  if (!value || value < 0 || !Number.isFinite(value)) return fallback;
+  return value;
+}
+
+function createBootstrapCheckpointWriter(options: {
+  workspace: string;
+  version: string;
+  totalPhases: number;
+  startedAt: string;
+  workspaceFingerprint?: WorkspaceFingerprint;
+  fileInterval?: number;
+  timeIntervalMs?: number;
+}): BootstrapCheckpointWriter {
+  let lastCheckpointAt = 0;
+  let lastCheckpointCompleted = 0;
+  let snapshot: BootstrapCheckpointSnapshot | null = null;
+  let lastPhaseIndex = -1;
+  let lastPhaseName = '';
+  const fileInterval = normalizeCheckpointInterval(
+    options.fileInterval,
+    BOOTSTRAP_CHECKPOINT_FILE_INTERVAL
+  );
+  const timeIntervalMs = normalizeCheckpointInterval(
+    options.timeIntervalMs,
+    BOOTSTRAP_CHECKPOINT_TIME_INTERVAL_MS
+  );
+
+  const writeCheckpoint = async (): Promise<void> => {
+    if (!snapshot) return;
+    await writeBootstrapRecoveryState(options.workspace, {
+      kind: 'BootstrapRecoveryState.v1',
+      schema_version: 1,
+      workspace: options.workspace,
+      version: options.version,
+      phase_index: snapshot.phaseIndex,
+      phase_name: snapshot.phaseName,
+      total_phases: options.totalPhases,
+      started_at: options.startedAt,
+      updated_at: new Date().toISOString(),
+      workspace_fingerprint: options.workspaceFingerprint,
+      phase_progress: snapshot.progress,
+    });
+  };
+
+  const update = async (updateInput: { phaseIndex: number; phaseName: string; progress: BootstrapPhaseProgress }): Promise<void> => {
+    snapshot = {
+      phaseIndex: updateInput.phaseIndex,
+      phaseName: updateInput.phaseName,
+      progress: {
+        total: updateInput.progress.total,
+        completed: updateInput.progress.completed,
+        currentFile: updateInput.progress.currentFile,
+      },
+    };
+    if (updateInput.phaseIndex !== lastPhaseIndex || updateInput.phaseName !== lastPhaseName) {
+      lastPhaseIndex = updateInput.phaseIndex;
+      lastPhaseName = updateInput.phaseName;
+      lastCheckpointAt = 0;
+      lastCheckpointCompleted = 0;
+    }
+    const now = Date.now();
+    const shouldCheckpointByCount = snapshot.progress.completed - lastCheckpointCompleted >= fileInterval;
+    const shouldCheckpointByTime = now - lastCheckpointAt >= timeIntervalMs;
+    if (!shouldCheckpointByCount && !shouldCheckpointByTime) {
+      return;
+    }
+    lastCheckpointAt = now;
+    lastCheckpointCompleted = snapshot.progress.completed;
+    await writeCheckpoint();
+  };
+
+  return {
+    update,
+    flush: async () => {
+      await writeCheckpoint();
+    },
+    getSnapshot: () => snapshot,
+  };
 }
 
 /**
@@ -775,6 +890,13 @@ export async function bootstrapProject(
   }
   const startPhaseIndex = recoveryValid ? (recovery?.phase_index ?? 0) : 0;
   const recoveryStartedAt = recovery?.started_at ?? state.startedAt?.toISOString() ?? new Date().toISOString();
+  const checkpointWriter = createBootstrapCheckpointWriter({
+    workspace,
+    version: currentVersionString,
+    totalPhases,
+    startedAt: recoveryStartedAt,
+    workspaceFingerprint: effectiveFingerprint,
+  });
 
   try {
     // Check if upgrade is needed first
@@ -825,7 +947,9 @@ export async function bootstrapProject(
         report,
         governorConfig,
         governorRunState,
-        writeIndexState
+        writeIndexState,
+        phaseIndex,
+        checkpointWriter
       );
       report.phases.push(phaseResult);
 
@@ -979,6 +1103,10 @@ export async function bootstrapProject(
     void globalEventBus.emit(createBootstrapCompleteEvent(workspace, false, failedDurationMs, report.error));
     const phaseIndex = state.currentPhase ? BOOTSTRAP_PHASES.indexOf(state.currentPhase) : startPhaseIndex;
     const phaseName = state.currentPhase?.name ?? 'unknown';
+    const checkpointSnapshot = checkpointWriter.getSnapshot();
+    const phaseProgress = checkpointSnapshot && checkpointSnapshot.phaseIndex === phaseIndex
+      ? checkpointSnapshot.progress
+      : undefined;
     try {
       await writeBootstrapRecoveryState(workspace, {
         kind: 'BootstrapRecoveryState.v1',
@@ -990,6 +1118,8 @@ export async function bootstrapProject(
         total_phases: totalPhases,
         started_at: recoveryStartedAt,
         updated_at: new Date().toISOString(),
+        workspace_fingerprint: effectiveFingerprint,
+        phase_progress: phaseProgress,
         last_error: report.error,
       });
     } catch {
@@ -1075,7 +1205,9 @@ async function runBootstrapPhase(
   report: BootstrapReport,
   governorConfig: typeof DEFAULT_GOVERNOR_CONFIG,
   governorRunState: ReturnType<typeof createGovernorRunState>,
-  writeIndexState?: (state: IndexState, options?: { force?: boolean }) => Promise<void>
+  writeIndexState: ((state: IndexState, options?: { force?: boolean }) => Promise<void>) | undefined,
+  phaseIndex: number,
+  checkpointWriter: BootstrapCheckpointWriter
 ): Promise<BootstrapPhaseResult> {
   const startedAt = new Date();
   const errors: string[] = [];
@@ -1141,6 +1273,15 @@ async function runBootstrapPhase(
       case 'semantic_indexing': {
         const startedAtMs = Date.now();
         const onProgress: IndexProgressCallback = async (progress) => {
+          await checkpointWriter.update({
+            phaseIndex,
+            phaseName: phase.name,
+            progress: {
+              total: progress.total,
+              completed: progress.completed,
+              currentFile: progress.currentFile,
+            },
+          });
           if (!writeIndexState) return;
           const estimatedCompletion = estimateCompletion(startedAtMs, progress);
           await writeIndexState({
@@ -2670,6 +2811,10 @@ export function createBootstrapConfig(
 }
 
 export const __testing = {
+  readBootstrapRecoveryState,
+  writeBootstrapRecoveryState,
+  clearBootstrapRecoveryState,
+  createBootstrapCheckpointWriter,
   computeWorkspaceFingerprint,
   fingerprintsMatch,
   applyIngestionResults,

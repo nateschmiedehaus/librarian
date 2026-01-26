@@ -5,6 +5,43 @@
 
 ---
 
+## 🛑 HARD STOP — CIRCULAR EVALUATION DETECTED
+
+**STOP ALL CURRENT WORK. READ THIS IMMEDIATELY.**
+
+The eval-corpus repos are **NOT REAL EXTERNAL REPOS**. They are synthetic directories inside the main repo with no git history. This is **circular evaluation** — one of the 5 HARD STOPS.
+
+**Evidence:**
+```
+$ cd eval-corpus/repos/small-typescript && git remote -v
+(no output - not a real git repo, just a directory)
+```
+
+**Required Action Before Continuing:**
+1. **STOP** whatever work unit you are on
+2. **Execute WU-801** — Clone REAL repos from GitHub
+3. **Verify** each repo has its own git history and remote origin
+4. **Only then** continue to Phase 9/10
+
+```bash
+# REQUIRED: Clone real repos NOW
+mkdir -p eval-corpus/external-repos
+cd eval-corpus/external-repos
+
+# Example real repos (find recent, obscure ones):
+gh search repos --language=typescript --created=">2024-06-01" --stars="10..100" --limit=10
+git clone https://github.com/<real-repo-1> repo-1
+git clone https://github.com/<real-repo-2> repo-2
+# etc. (need 5+ repos)
+
+# Create manifest proving these are real
+echo '{"repos": [...], "validationNote": "Real GitHub repos with verified git history"}' > manifest.json
+```
+
+**DO NOT PROCEED TO WU-1001 until external-repos/ exists with real repos.**
+
+---
+
 ## ⚠️ CURRENT SESSION PRIORITY (2026-01-26)
 
 **READ THIS FIRST. Execute in order:**

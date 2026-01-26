@@ -1,0 +1,15 @@
+{
+  "repoId": "small-typescript",
+  "name": "Small TypeScript Fixture",
+  "languages": [
+    "TypeScript"
+  ],
+  "fileCount": 27,
+  "annotationLevel": "full",
+  "characteristics": {
+    "documentationDensity": "high",
+    "testCoverage": "high",
+    "architecturalClarity": "clear",
+    "codeQuality": "clean"
+  }
+}

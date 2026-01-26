@@ -7,7 +7,7 @@ import {
 } from '../pattern_catalog.js';
 import { DEFAULT_TECHNIQUE_PRIMITIVES_BY_ID } from '../technique_library.js';
 import { DEFAULT_TECHNIQUE_COMPOSITIONS_BY_ID } from '../technique_compositions.js';
-import { placeholder, resolveQuantifiedValue } from '../../epistemics/quantification.js';
+import { deterministic } from '../../epistemics/confidence.js';
 
 const basePattern: CompositionPatternInput = {
   id: 'pattern_bug_investigation',
@@ -17,7 +17,7 @@ const basePattern: CompositionPatternInput = {
     {
       trigger: 'Something is broken',
       context: ['error message'],
-      confidence: placeholder(0.8, 'PATTERN-TEST-001'),
+      confidence: deterministic(true, 'pattern_catalog_test'),
       examples: ['Why is login failing?'],
     },
   ],
@@ -54,7 +54,7 @@ describe('pattern catalog', () => {
   it('creates a validated composition pattern', () => {
     const pattern = createCompositionPattern(basePattern);
     expect(pattern.id).toBe('pattern_bug_investigation');
-    expect(resolveQuantifiedValue(pattern.situations[0].confidence)).toBe(0.8);
+    expect(pattern.situations[0].confidence.type).toBe('deterministic');
     expect(pattern.corePrimitives[0]).toBe('tp_hypothesis');
   });
 
@@ -106,7 +106,15 @@ describe('pattern catalog', () => {
       createCompositionPattern({
         ...basePattern,
         situations: [
-          { ...basePattern.situations[0], confidence: placeholder(2, 'PATTERN-TEST-INVALID') },
+          {
+            ...basePattern.situations[0],
+            confidence: {
+              type: 'derived',
+              value: 1.2,
+              formula: 'test',
+              inputs: [],
+            },
+          },
         ],
       })
     ).toThrow(/pattern_catalog_confidence_invalid/);

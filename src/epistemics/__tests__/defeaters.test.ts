@@ -30,6 +30,7 @@ import {
   createDefeater,
   type Claim,
 } from '../types.js';
+import { deterministic } from '../confidence.js';
 
 describe('Defeater Calculus Engine', () => {
   let storage: EvidenceGraphStorage;
@@ -83,7 +84,8 @@ describe('Defeater Calculus Engine', () => {
         type: options.sourceType ?? 'llm',
         id: options.sourceId ?? 'test-model',
       },
-      confidence: {
+      confidence: deterministic(true, 'test_claim'),
+      signalStrength: {
         retrieval: 0.8,
         structural: 0.9,
         semantic: 0.7,
@@ -325,14 +327,14 @@ describe('Defeater Calculus Engine', () => {
       expect(storedDefeater!.status).toBe('active');
     });
 
-    it('should reduce confidence based on defeater type', async () => {
-      const claim = createTestClaim('confidence-claim', 'Confidence test', {
+    it('should reduce signal strength based on defeater type', async () => {
+      const claim = createTestClaim('confidence-claim', 'Signal strength test', {
         file: 'src/conf.ts',
       });
       await storage.upsertClaim(claim);
 
       const originalClaim = await storage.getClaim(claim.id);
-      const originalConfidence = originalClaim!.confidence.overall;
+      const originalSignalStrength = originalClaim!.signalStrength.overall;
 
       const detection = await detectDefeaters(storage, {
         changedFiles: ['src/conf.ts'],
@@ -341,7 +343,7 @@ describe('Defeater Calculus Engine', () => {
       await applyDefeaters(storage, detection);
 
       const updatedClaim = await storage.getClaim(claim.id);
-      expect(updatedClaim!.confidence.overall).toBeLessThan(originalConfidence);
+      expect(updatedClaim!.signalStrength.overall).toBeLessThan(originalSignalStrength);
     });
 
     it('should mark claims as defeated when confidence is too low', async () => {

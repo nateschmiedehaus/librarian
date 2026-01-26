@@ -24,9 +24,9 @@ export {
   type ClaimStatus,
 
   // Confidence
-  type DecomposedConfidence,
-  createDefaultConfidence,
-  computeOverallConfidence,
+  type ClaimSignalStrength,
+  createDefaultSignalStrength,
+  computeOverallSignalStrength,
 
   // Edges
   type EvidenceEdge,
@@ -134,6 +134,34 @@ export {
   type ComputedConfidenceResult,
 } from './computed_confidence.js';
 
+// Claim-outcome tracking (Track F C1)
+export {
+  ClaimOutcomeTracker,
+  createClaimOutcomeTracker,
+  type ClaimOutcomeCategory,
+  type TrackClaimInput,
+  type RecordOutcomeInput,
+  type ClaimOutcomeTrackerConfig,
+  type OutcomeCalibrationOptions,
+} from './outcomes.js';
+
+// Calibration curve computation (Track F C2)
+export {
+  computeCalibrationCurve,
+  buildCalibrationReport,
+  snapshotCalibrationReport,
+  restoreCalibrationReport,
+  adjustConfidenceScore,
+  type CalibrationSample,
+  type CalibrationBucket,
+  type CalibrationCurve,
+  type CalibrationReport,
+  type CalibrationReportSnapshot,
+  type CalibrationCurveOptions,
+  type CalibrationAdjustmentOptions,
+  type CalibrationAdjustmentResult,
+} from './calibration.js';
+
 // Quantification invariant helpers (DEPRECATED - use ConfidenceValue instead)
 export {
   /** @deprecated Use ConfidenceValue from confidence.ts instead */
@@ -179,6 +207,8 @@ export {
   uncalibratedConfidence,
   measuredConfidence,
   type CalibrationResult,
+  adjustConfidenceValue,
+  type ConfidenceAdjustmentResult,
 
   // Degradation handlers
   getNumericValue,

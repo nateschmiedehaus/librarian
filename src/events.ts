@@ -151,16 +151,16 @@ export function createEntityDeletedEvent(entityType: string, entityId: string, f
   return { type: 'entity_deleted', timestamp: new Date(), data: { entityType, entityId, filePath } };
 }
 
-export function createQueryReceivedEvent(queryId: string, intent: string, depth: string): LibrarianEvent {
-  return { type: 'query_received', timestamp: new Date(), data: { queryId, intent, depth } };
+export function createQueryReceivedEvent(queryId: string, intent: string, depth: string, sessionId?: string): LibrarianEvent {
+  return { type: 'query_received', timestamp: new Date(), data: { queryId, intent, depth }, sessionId };
 }
 
-export function createQueryStartedEvent(queryId: string, intent: string, depth: string): LibrarianEvent {
-  return createQueryReceivedEvent(queryId, intent, depth);
+export function createQueryStartedEvent(queryId: string, intent: string, depth: string, sessionId?: string): LibrarianEvent {
+  return createQueryReceivedEvent(queryId, intent, depth, sessionId);
 }
 
-export function createQueryCompleteEvent(queryId: string, packCount: number, cacheHit: boolean, latencyMs: number): LibrarianEvent {
-  return { type: 'query_complete', timestamp: new Date(), data: { queryId, packCount, cacheHit, latencyMs } };
+export function createQueryCompleteEvent(queryId: string, packCount: number, cacheHit: boolean, latencyMs: number, sessionId?: string): LibrarianEvent {
+  return { type: 'query_complete', timestamp: new Date(), data: { queryId, packCount, cacheHit, latencyMs }, sessionId };
 }
 
 export function createContextPackInvalidatedEvent(packId: string, reason?: string): LibrarianEvent {
@@ -199,16 +199,16 @@ export function createBootstrapErrorEvent(workspace: string, error: string, phas
   return { type: 'bootstrap_error', timestamp: new Date(), data: { workspace, error, phase } };
 }
 
-export function createQueryStartEvent(queryId: string, intent: string, depth: string): LibrarianEvent {
-  return { type: 'query_start', timestamp: new Date(), data: { queryId, intent, depth } };
+export function createQueryStartEvent(queryId: string, intent: string, depth: string, sessionId?: string): LibrarianEvent {
+  return { type: 'query_start', timestamp: new Date(), data: { queryId, intent, depth }, sessionId };
 }
 
-export function createQueryResultEvent(queryId: string, packCount: number, confidence: number, latencyMs: number): LibrarianEvent {
-  return { type: 'query_result', timestamp: new Date(), data: { queryId, packCount, confidence, latencyMs } };
+export function createQueryResultEvent(queryId: string, packCount: number, confidence: number, latencyMs: number, sessionId?: string): LibrarianEvent {
+  return { type: 'query_result', timestamp: new Date(), data: { queryId, packCount, confidence, latencyMs }, sessionId };
 }
 
-export function createQueryErrorEvent(queryId: string, error: string): LibrarianEvent {
-  return { type: 'query_error', timestamp: new Date(), data: { queryId, error } };
+export function createQueryErrorEvent(queryId: string, error: string, sessionId?: string): LibrarianEvent {
+  return { type: 'query_error', timestamp: new Date(), data: { queryId, error }, sessionId };
 }
 
 export function createIndexFileEvent(filePath: string, functionsFound: number, durationMs: number): LibrarianEvent {

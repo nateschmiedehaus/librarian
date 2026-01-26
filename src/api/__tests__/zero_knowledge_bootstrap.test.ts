@@ -9,12 +9,14 @@ import {
   type KnowledgeClaim,
   type KnowledgeState,
 } from '../zero_knowledge_bootstrap.js';
+import { absent } from '../../epistemics/confidence.js';
 
-function makeClaim(source: KnowledgeClaim['source'], confidence = 0.7): KnowledgeClaim {
+function makeClaim(source: KnowledgeClaim['source'], signalStrength = 0.7): KnowledgeClaim {
   return {
     claim: `${source} claim`,
     source,
-    confidence,
+    confidence: absent('uncalibrated'),
+    signalStrength,
     evidence: `${source} evidence`,
   };
 }
@@ -55,22 +57,25 @@ describe('zero-knowledge bootstrap protocol', () => {
   it('computes evidence-based confidence', () => {
     const empty = computeEvidenceBasedConfidence('claim', []);
     expect(empty.calibrationMethod).toBe('no_evidence');
-    expect(empty.confidence).toBe(0.5);
+    expect(empty.confidence.type).toBe('absent');
+    expect(empty.signalStrength).toBe(0.5);
 
     const combined = computeEvidenceBasedConfidence('claim', [
       { source: 'syntactic', evidence: 'parse', weight: 0.9, reliability: 1 },
       { source: 'structural', evidence: 'graph', weight: 0.6, reliability: 0.5 },
     ]);
     expect(combined.calibrationMethod).toBe('combining_agreement');
-    expect(combined.confidence).toBeGreaterThan(0.5);
-    expect(combined.confidence).toBeLessThanOrEqual(0.95);
+    expect(combined.confidence.type).toBe('absent');
+    expect(combined.signalStrength).toBeGreaterThan(0.5);
+    expect(combined.signalStrength).toBeLessThanOrEqual(0.95);
 
     const contradictory = computeEvidenceBasedConfidence('claim', [
       { source: 'syntactic', evidence: 'parse', weight: 0.5, reliability: 1 },
       { source: 'semantic', evidence: 'summary', weight: -0.5, reliability: 0.7 },
     ]);
     expect(contradictory.calibrationMethod).toBe('contradictory_evidence');
-    expect(contradictory.confidence).toBeLessThanOrEqual(0.5);
+    expect(contradictory.confidence.type).toBe('absent');
+    expect(contradictory.signalStrength).toBeLessThanOrEqual(0.5);
   });
 
   it('reports understanding levels', () => {

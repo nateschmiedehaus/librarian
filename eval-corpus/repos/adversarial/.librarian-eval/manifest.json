@@ -1,0 +1,13 @@
+{
+  "repoId": "adversarial",
+  "name": "Adversarial Fixture",
+  "languages": ["TypeScript"],
+  "fileCount": 19,
+  "annotationLevel": "sparse",
+  "characteristics": {
+    "documentationDensity": "low",
+    "testCoverage": "low",
+    "architecturalClarity": "complex",
+    "codeQuality": "legacy"
+  }
+}

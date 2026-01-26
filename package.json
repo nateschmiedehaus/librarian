@@ -82,6 +82,7 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
+    "eval:ci": "tsx scripts/eval-corpus.ts",
     "prepublishOnly": "npm run clean && npm run build && npm test",
     "release": "npm run build && npm publish --access public"
   },

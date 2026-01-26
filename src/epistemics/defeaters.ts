@@ -22,12 +22,12 @@ import {
   type DefeaterSeverity,
   type Contradiction,
   type ContradictionType,
-  type DecomposedConfidence,
+  type ClaimSignalStrength,
   type EvidenceGraph,
   createClaimId,
   createDefeater,
   createContradiction,
-  computeOverallConfidence,
+  computeOverallSignalStrength,
 } from './types.js';
 import type { EvidenceGraphStorage } from './storage.js';
 
@@ -40,8 +40,8 @@ export interface DefeaterEngineConfig {
   /** How old (in ms) before a claim is considered stale */
   stalenessThresholdMs: number;
 
-  /** Minimum confidence below which claims are auto-defeated */
-  minimumConfidenceThreshold: number;
+  /** Minimum signal strength below which claims are auto-defeated */
+  minimumSignalStrengthThreshold: number;
 
   /** Whether to automatically activate detected defeaters */
   autoActivateDefeaters: boolean;
@@ -56,7 +56,7 @@ export interface DefeaterEngineConfig {
 /** Default configuration */
 export const DEFAULT_DEFEATER_CONFIG: DefeaterEngineConfig = {
   stalenessThresholdMs: 7 * 24 * 60 * 60 * 1000, // 7 days
-  minimumConfidenceThreshold: 0.1,
+  minimumSignalStrengthThreshold: 0.1,
   autoActivateDefeaters: true,
   autoResolveDefeaters: false,
   maxBatchSize: 100,
@@ -484,19 +484,19 @@ export async function applyDefeaters(
       await storage.activateDefeater(defeater.id);
       result.activatedDefeaters.push(defeater.id);
 
-      // Apply confidence reduction to affected claims
+      // Apply signal-strength reduction to affected claims
       for (const claimId of defeater.affectedClaimIds) {
         const claim = await storage.getClaim(claimId);
         if (claim) {
-          const newConfidence = applyConfidenceReduction(
-            claim.confidence,
+          const newSignalStrength = applySignalStrengthReduction(
+            claim.signalStrength,
             defeater.confidenceReduction,
             defeater.type
           );
-          await storage.updateClaimConfidence(claimId, newConfidence);
+          await storage.updateClaimSignalStrength(claimId, newSignalStrength);
 
-          // Update status if confidence falls below threshold
-          if (newConfidence.overall < config.minimumConfidenceThreshold) {
+          // Update status if signal strength falls below threshold
+          if (newSignalStrength.overall < config.minimumSignalStrengthThreshold) {
             await storage.updateClaimStatus(claimId, 'defeated');
           } else if (defeater.severity === 'full') {
             await storage.updateClaimStatus(claimId, 'defeated');
@@ -531,68 +531,68 @@ export async function applyDefeaters(
 /**
  * Apply confidence reduction based on defeater type.
  */
-function applyConfidenceReduction(
-  confidence: DecomposedConfidence,
+function applySignalStrengthReduction(
+  signalStrength: ClaimSignalStrength,
   reduction: number,
   defeaterType: ExtendedDefeaterType
-): DecomposedConfidence {
-  const newConfidence = { ...confidence };
+): ClaimSignalStrength {
+  const newSignalStrength = { ...signalStrength };
 
-  // Apply reduction to relevant confidence components based on defeater type
+  // Apply reduction to relevant signal components based on defeater type
   switch (defeaterType) {
     case 'code_change':
     case 'hash_mismatch':
-      // Affects structural and recency confidence
-      newConfidence.structural = Math.max(0, confidence.structural - reduction);
-      newConfidence.recency = Math.max(0, confidence.recency - reduction);
+      // Affects structural and recency signal strength
+      newSignalStrength.structural = Math.max(0, signalStrength.structural - reduction);
+      newSignalStrength.recency = Math.max(0, signalStrength.recency - reduction);
       break;
 
     case 'test_failure':
-      // Primarily affects test execution confidence
-      newConfidence.testExecution = Math.max(0, confidence.testExecution - reduction);
+      // Primarily affects test execution signal strength
+      newSignalStrength.testExecution = Math.max(0, signalStrength.testExecution - reduction);
       break;
 
     case 'staleness':
-      // Primarily affects recency confidence
-      newConfidence.recency = Math.max(0, confidence.recency - reduction);
+      // Primarily affects recency signal strength
+      newSignalStrength.recency = Math.max(0, signalStrength.recency - reduction);
       break;
 
     case 'contradiction':
     case 'new_info':
-      // Affects semantic confidence
-      newConfidence.semantic = Math.max(0, confidence.semantic - reduction);
+      // Affects semantic signal strength
+      newSignalStrength.semantic = Math.max(0, signalStrength.semantic - reduction);
       break;
 
     case 'coverage_gap':
-      // Affects retrieval confidence
-      newConfidence.retrieval = Math.max(0, confidence.retrieval - reduction);
+      // Affects retrieval signal strength
+      newSignalStrength.retrieval = Math.max(0, signalStrength.retrieval - reduction);
       break;
 
     case 'tool_failure':
     case 'sandbox_mismatch':
-      // Affects structural confidence
-      newConfidence.structural = Math.max(0, confidence.structural - reduction);
+      // Affects structural signal strength
+      newSignalStrength.structural = Math.max(0, signalStrength.structural - reduction);
       break;
 
     case 'provider_unavailable':
       // Minor overall reduction
-      newConfidence.retrieval = Math.max(0, confidence.retrieval - reduction * 0.5);
-      newConfidence.semantic = Math.max(0, confidence.semantic - reduction * 0.5);
+      newSignalStrength.retrieval = Math.max(0, signalStrength.retrieval - reduction * 0.5);
+      newSignalStrength.semantic = Math.max(0, signalStrength.semantic - reduction * 0.5);
       break;
 
     default:
       // Generic reduction across all components
-      newConfidence.retrieval = Math.max(0, confidence.retrieval - reduction * 0.2);
-      newConfidence.structural = Math.max(0, confidence.structural - reduction * 0.2);
-      newConfidence.semantic = Math.max(0, confidence.semantic - reduction * 0.2);
-      newConfidence.testExecution = Math.max(0, confidence.testExecution - reduction * 0.2);
-      newConfidence.recency = Math.max(0, confidence.recency - reduction * 0.2);
+      newSignalStrength.retrieval = Math.max(0, signalStrength.retrieval - reduction * 0.2);
+      newSignalStrength.structural = Math.max(0, signalStrength.structural - reduction * 0.2);
+      newSignalStrength.semantic = Math.max(0, signalStrength.semantic - reduction * 0.2);
+      newSignalStrength.testExecution = Math.max(0, signalStrength.testExecution - reduction * 0.2);
+      newSignalStrength.recency = Math.max(0, signalStrength.recency - reduction * 0.2);
   }
 
-  // Recompute overall confidence
-  newConfidence.overall = computeOverallConfidence(newConfidence);
+  // Recompute overall signal strength
+  newSignalStrength.overall = computeOverallSignalStrength(newSignalStrength);
 
-  return newConfidence;
+  return newSignalStrength;
 }
 
 // ============================================================================
@@ -710,12 +710,12 @@ export interface GraphHealthAssessment {
   /** Number of unresolved contradictions */
   unresolvedContradictionCount: number;
 
-  /** Average confidence of active claims */
-  averageConfidence: number;
+  /** Average signal strength of active claims */
+  averageSignalStrength: number;
 
   /** Top issues affecting health */
   topIssues: Array<{
-    type: 'defeater' | 'contradiction' | 'low_confidence' | 'staleness';
+    type: 'defeater' | 'contradiction' | 'low_signal_strength' | 'staleness';
     description: string;
     severity: 'high' | 'medium' | 'low';
     affectedClaims: number;
@@ -788,18 +788,18 @@ export async function assessGraphHealth(
   }
 
   // Analyze low confidence
-  const lowConfidenceClaims = activeClaims.filter(
-    (c) => c.confidence.overall < 0.5
+  const lowSignalClaims = activeClaims.filter(
+    (c) => c.signalStrength.overall < 0.5
   );
-  if (lowConfidenceClaims.length > 0) {
+  if (lowSignalClaims.length > 0) {
     topIssues.push({
-      type: 'low_confidence',
-      description: `${lowConfidenceClaims.length} claim(s) have low confidence`,
+      type: 'low_signal_strength',
+      description: `${lowSignalClaims.length} claim(s) have low signal strength`,
       severity: 'low',
-      affectedClaims: lowConfidenceClaims.length,
+      affectedClaims: lowSignalClaims.length,
     });
     recommendations.push(
-      `Consider gathering additional evidence for ${lowConfidenceClaims.length} low-confidence claims`
+      `Consider gathering additional evidence for ${lowSignalClaims.length} low-signal claims`
     );
   }
 
@@ -817,7 +817,7 @@ export async function assessGraphHealth(
     staleClaimCount: staleClaims.length,
     activeDefeaterCount: activeDefeaters.length,
     unresolvedContradictionCount: unresolvedContradictions.length,
-    averageConfidence: stats.avgConfidence,
+    averageSignalStrength: stats.avgSignalStrength,
     topIssues,
     recommendations,
   };

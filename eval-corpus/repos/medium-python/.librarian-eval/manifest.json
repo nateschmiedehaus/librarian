@@ -1,0 +1,15 @@
+{
+  "repoId": "medium-python",
+  "name": "Medium Python Fixture",
+  "languages": [
+    "Python"
+  ],
+  "fileCount": 11,
+  "annotationLevel": "partial",
+  "characteristics": {
+    "documentationDensity": "medium",
+    "testCoverage": "medium",
+    "architecturalClarity": "moderate",
+    "codeQuality": "average"
+  }
+}

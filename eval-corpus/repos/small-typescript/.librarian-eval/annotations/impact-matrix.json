@@ -1,0 +1,43 @@
+{
+  "version": "0.1.0",
+  "impacts": [
+    {
+      "source": "src/services/loanService.ts",
+      "targets": [
+        "src/policy/loanPolicy.ts",
+        "src/policy/rateLimiter.ts",
+        "src/services/bookService.ts",
+        "src/services/notificationService.ts",
+        "src/services/auditService.ts",
+        "src/repositories/loanRepository.ts"
+      ],
+      "reason": "Checkout and return flows depend on policy checks, rate limiting, inventory adjustments, notifications, audits, and loan persistence."
+    },
+    {
+      "source": "src/auth/auth.ts",
+      "targets": [
+        "src/auth/sessionStore.ts",
+        "src/repositories/userRepository.ts"
+      ],
+      "reason": "Authentication requires session lookup/expiry checks and active user resolution."
+    },
+    {
+      "source": "src/controllers/bookController.ts",
+      "targets": [
+        "src/auth/auth.ts",
+        "src/services/bookService.ts"
+      ],
+      "reason": "Book endpoints enforce role checks and delegate to book services."
+    },
+    {
+      "source": "src/controllers/loanController.ts",
+      "targets": [
+        "src/auth/auth.ts",
+        "src/services/loanService.ts",
+        "src/reporting/overdueReport.ts",
+        "src/data/db.ts"
+      ],
+      "reason": "Loan endpoints authorize users, execute loan service logic, and build overdue reports using db data."
+    }
+  ]
+}

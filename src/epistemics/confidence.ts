@@ -12,6 +12,9 @@
  * @packageDocumentation
  */
 
+import type { CalibrationAdjustmentOptions, CalibrationReport } from './calibration.js';
+import { adjustConfidenceScore } from './calibration.js';
+
 // ============================================================================
 // CONFIDENCE VALUE TYPES
 // ============================================================================
@@ -283,6 +286,54 @@ export function measuredConfidence(data: CalibrationResult): MeasuredConfidence 
 }
 
 // ============================================================================
+// CALIBRATION ADJUSTMENT (Track F C3)
+// ============================================================================
+
+export interface ConfidenceAdjustmentResult {
+  confidence: ConfidenceValue;
+  raw: number | null;
+  calibrated: number | null;
+  weight: number;
+  status: 'uncalibrated' | 'calibrating' | 'calibrated';
+  datasetId?: string;
+}
+
+export function adjustConfidenceValue(
+  confidence: ConfidenceValue,
+  report: CalibrationReport,
+  options: CalibrationAdjustmentOptions = {}
+): ConfidenceAdjustmentResult {
+  const raw = getNumericValue(confidence);
+  if (raw === null) {
+    return {
+      confidence,
+      raw: null,
+      calibrated: null,
+      weight: 0,
+      status: 'uncalibrated',
+      datasetId: report.datasetId,
+    };
+  }
+
+  const adjustment = adjustConfidenceScore(raw, report, options);
+  const adjusted: ConfidenceValue = {
+    type: 'derived',
+    value: adjustment.calibrated,
+    formula: `calibration_curve:${report.datasetId}`,
+    inputs: [{ name: 'raw_confidence', confidence }],
+  };
+
+  return {
+    confidence: adjusted,
+    raw,
+    calibrated: adjustment.calibrated,
+    weight: adjustment.weight,
+    status: resolveCalibrationStatus(report, adjustment.weight),
+    datasetId: report.datasetId,
+  };
+}
+
+// ============================================================================
 // DEGRADATION HANDLERS
 // ============================================================================
 
@@ -300,6 +351,15 @@ export function getNumericValue(conf: ConfidenceValue): number | null {
     case 'absent':
       return null;
   }
+}
+
+function resolveCalibrationStatus(
+  report: CalibrationReport,
+  weight: number
+): 'uncalibrated' | 'calibrating' | 'calibrated' {
+  if (report.sampleSize <= 0) return 'uncalibrated';
+  if (weight >= 1) return 'calibrated';
+  return 'calibrating';
 }
 
 /**

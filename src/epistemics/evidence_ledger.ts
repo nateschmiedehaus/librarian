@@ -17,6 +17,7 @@
 import type Database from 'better-sqlite3';
 import type { ConfidenceValue } from './confidence.js';
 import { randomUUID } from 'node:crypto';
+import { assertClaimConfidenceBoundary } from './confidence_guards.js';
 
 // ============================================================================
 // BRANDED TYPES
@@ -31,6 +32,22 @@ export function createEvidenceId(id?: string): EvidenceId {
 
 export function createSessionId(id?: string): SessionId {
   return (id ?? `sess_${randomUUID()}`) as SessionId;
+}
+
+export const REPLAY_UNAVAILABLE_TRACE = 'unverified_by_trace(replay_unavailable)' as const;
+
+export function isReplayUnavailableTrace(traceId: string): traceId is typeof REPLAY_UNAVAILABLE_TRACE {
+  return traceId === REPLAY_UNAVAILABLE_TRACE;
+}
+
+export function resolveReplaySessionId(traceId: string | null | undefined): SessionId | null {
+  if (!traceId) return null;
+  if (traceId.startsWith('unverified_by_trace(')) return null;
+  return traceId as SessionId;
+}
+
+export function isReplayableTraceId(traceId: string | null | undefined): traceId is SessionId {
+  return resolveReplaySessionId(traceId) !== null;
 }
 
 // ============================================================================
@@ -392,6 +409,11 @@ export class SqliteEvidenceLedger implements IEvidenceLedger {
       timestamp,
     };
 
+    assertClaimConfidenceBoundary(
+      { kind: entry.kind, payload: entry.payload, confidence: entry.confidence },
+      'evidence_ledger.append'
+    );
+
     this.db
       .prepare(
         `
@@ -432,6 +454,11 @@ export class SqliteEvidenceLedger implements IEvidenceLedger {
         const id = createEvidenceId();
         const fullEntry: EvidenceEntry = { ...entry, id, timestamp };
         fullEntries.push(fullEntry);
+
+        assertClaimConfidenceBoundary(
+          { kind: entry.kind, payload: entry.payload, confidence: entry.confidence },
+          'evidence_ledger.appendBatch'
+        );
 
         stmt.run(
           id,

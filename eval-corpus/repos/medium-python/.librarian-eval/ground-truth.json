@@ -1,0 +1,1473 @@
+{
+  "version": "0.1.0",
+  "repoId": "medium-python",
+  "queries": [
+    {
+      "queryId": "mp-store-collections",
+      "repoId": "medium-python",
+      "intent": "Where is the in-memory store defined and what collections does it hold?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "The in-memory store is InMemoryStore in src/store.py, and it holds users, tickets, tokens, audits, and rate limit state maps.",
+        "mustIncludeFiles": [
+          "src/store.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/models.py"
+        ],
+        "mustIncludeFacts": [
+          "InMemoryStore defines users, tickets, tokens, audits, and rate_limits collections.",
+          "The store uses dicts for users/tickets/tokens and a list for audits."
+        ],
+        "mustNotClaim": [
+          "The store is backed by SQLite or Redis."
+        ],
+        "acceptableVariations": [
+          "store.InMemoryStore keeps users/tickets/tokens plus audits and per-user rate limit state in memory."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "store-collections",
+            "kind": "file",
+            "label": "InMemoryStore fields",
+            "path": "src/store.py",
+            "location": {
+              "startLine": 7,
+              "endLine": 14
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-store-singleton",
+      "repoId": "medium-python",
+      "intent": "How is the store singleton created and accessed?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "store.get_store lazily initializes a module-level _STORE singleton and returns it for all callers.",
+        "mustIncludeFiles": [
+          "src/store.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "_STORE starts as None and is set to InMemoryStore() on first call.",
+          "get_store returns the same singleton instance after initialization."
+        ],
+        "mustNotClaim": [
+          "Each call creates a new store instance."
+        ],
+        "acceptableVariations": [
+          "get_store provides a lazy singleton backed by the module-level _STORE variable."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "store-singleton",
+            "kind": "file",
+            "label": "_STORE and get_store",
+            "path": "src/store.py",
+            "location": {
+              "startLine": 39,
+              "endLine": 46
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-token-creation",
+      "repoId": "medium-python",
+      "intent": "How does create_token build the token record and expiration?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "create_token builds a token string from the user id and timestamp, sets expires_at using TOKEN_TTL_MINUTES, stores the TokenRecord in store.tokens, and returns it.",
+        "mustIncludeFiles": [
+          "src/auth.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.py"
+        ],
+        "mustIncludeFacts": [
+          "expires_at is computed by add_minutes(stamp, TOKEN_TTL_MINUTES).",
+          "The TokenRecord is stored in store.tokens keyed by the token string."
+        ],
+        "mustNotClaim": [
+          "Tokens are persisted to disk or hashed."
+        ],
+        "acceptableVariations": [
+          "create_token uses now_iso plus TOKEN_TTL_MINUTES to build a TokenRecord and caches it in the store."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "token-create",
+            "kind": "file",
+            "label": "create_token implementation",
+            "path": "src/auth.py",
+            "location": {
+              "startLine": 17,
+              "endLine": 24
+            }
+          },
+          {
+            "refId": "token-ttl",
+            "kind": "file",
+            "label": "TOKEN_TTL_MINUTES config",
+            "path": "src/config.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 3
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-authenticate-guards",
+      "repoId": "medium-python",
+      "intent": "What checks does authenticate perform before returning a user?",
+      "category": "security",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "authenticate verifies the token exists, rejects expired tokens, then loads the user and rejects missing or inactive users.",
+        "mustIncludeFiles": [
+          "src/auth.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/store.py"
+        ],
+        "mustIncludeFacts": [
+          "authenticate raises AuthError if the token is missing or expired.",
+          "authenticate raises AuthError if the user is missing or inactive."
+        ],
+        "mustNotClaim": [
+          "authenticate validates passwords or API keys."
+        ],
+        "acceptableVariations": [
+          "Authentication checks token existence/expiry and user active status."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "auth-authenticate",
+            "kind": "file",
+            "label": "authenticate checks",
+            "path": "src/auth.py",
+            "location": {
+              "startLine": 27,
+              "endLine": 38
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-require-role",
+      "repoId": "medium-python",
+      "intent": "How does require_role validate user roles?",
+      "category": "security",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "require_role first checks that the user role is in ALLOWED_ROLES, then ensures it is in the allowed list or throws AuthorizationError.",
+        "mustIncludeFiles": [
+          "src/auth.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.py"
+        ],
+        "mustIncludeFacts": [
+          "An unknown role (not in ALLOWED_ROLES) triggers AuthorizationError.",
+          "A known role not present in the allowed list also triggers AuthorizationError."
+        ],
+        "mustNotClaim": [
+          "Roles are ordered by numeric weights."
+        ],
+        "acceptableVariations": [
+          "Authorization requires the role to be in ALLOWED_ROLES and in the allowed argument list."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "require-role",
+            "kind": "file",
+            "label": "require_role implementation",
+            "path": "src/auth.py",
+            "location": {
+              "startLine": 41,
+              "endLine": 45
+            }
+          },
+          {
+            "refId": "allowed-roles",
+            "kind": "file",
+            "label": "ALLOWED_ROLES config",
+            "path": "src/config.py",
+            "location": {
+              "startLine": 11,
+              "endLine": 11
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-rate-limit",
+      "repoId": "medium-python",
+      "intent": "How does check_rate_limit enforce the per-minute cap?",
+      "category": "security",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "check_rate_limit stores a per-user window_start and count, resets after 60 seconds, increments per call, and raises RateLimitError when count exceeds RATE_LIMIT_PER_MINUTE.",
+        "mustIncludeFiles": [
+          "src/rate_limit.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.py"
+        ],
+        "mustIncludeFacts": [
+          "If elapsed >= 60 seconds, the counter resets and count becomes 1.",
+          "RateLimitError is raised when count exceeds RATE_LIMIT_PER_MINUTE."
+        ],
+        "mustNotClaim": [
+          "The limiter is based on IP addresses."
+        ],
+        "acceptableVariations": [
+          "Rate limiting keeps a per-user minute window and throws once the count goes above the configured threshold."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "rate-limit",
+            "kind": "file",
+            "label": "check_rate_limit logic",
+            "path": "src/rate_limit.py",
+            "location": {
+              "startLine": 11,
+              "endLine": 28
+            }
+          },
+          {
+            "refId": "rate-limit-config",
+            "kind": "file",
+            "label": "RATE_LIMIT_PER_MINUTE",
+            "path": "src/config.py",
+            "location": {
+              "startLine": 3,
+              "endLine": 4
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-policy-open-ticket",
+      "repoId": "medium-python",
+      "intent": "What conditions prevent a user from opening a ticket?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "can_open_ticket blocks inactive users, guest roles, and users who already have MAX_OPEN_TICKETS open.",
+        "mustIncludeFiles": [
+          "src/policy.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.py"
+        ],
+        "mustIncludeFacts": [
+          "Inactive users are rejected with reason 'inactive user'.",
+          "Guest roles are rejected, and open_tickets >= MAX_OPEN_TICKETS is rejected."
+        ],
+        "mustNotClaim": [
+          "The policy checks SLA hours or ticket severity."
+        ],
+        "acceptableVariations": [
+          "Policy rejects inactive or guest users and enforces MAX_OPEN_TICKETS."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "can-open",
+            "kind": "file",
+            "label": "can_open_ticket checks",
+            "path": "src/policy.py",
+            "location": {
+              "startLine": 7,
+              "endLine": 13
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-triage-classify",
+      "repoId": "medium-python",
+      "intent": "How does classify_severity determine a ticket's severity?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "classify_severity scans the lowercased title+description for keyword groups and returns critical/high/medium, defaulting to low if no keywords match.",
+        "mustIncludeFiles": [
+          "src/triage.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "The keywords map includes critical/high/medium groups.",
+          "When no keyword matches, the function returns 'low'."
+        ],
+        "mustNotClaim": [
+          "Severity is computed from SLA hours."
+        ],
+        "acceptableVariations": [
+          "Severity is keyword-based with a low fallback when no matches are found."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "classify-severity",
+            "kind": "file",
+            "label": "classify_severity",
+            "path": "src/triage.py",
+            "location": {
+              "startLine": 7,
+              "endLine": 19
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-triage-priority",
+      "repoId": "medium-python",
+      "intent": "What formula does compute_priority use to score a ticket?",
+      "category": "impact",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "compute_priority returns severity weight plus age_hours divided by 24.",
+        "mustIncludeFiles": [
+          "src/triage.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.py"
+        ],
+        "mustIncludeFacts": [
+          "Weights come from SEVERITY_WEIGHTS with a default of 1.",
+          "Age is normalized by dividing age_hours by 24."
+        ],
+        "mustNotClaim": [
+          "Priority multiplies severity by age."
+        ],
+        "acceptableVariations": [
+          "Priority is a simple weight + (age_hours / 24) calculation."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "compute-priority",
+            "kind": "file",
+            "label": "compute_priority",
+            "path": "src/triage.py",
+            "location": {
+              "startLine": 22,
+              "endLine": 24
+            }
+          },
+          {
+            "refId": "severity-weights",
+            "kind": "file",
+            "label": "SEVERITY_WEIGHTS",
+            "path": "src/config.py",
+            "location": {
+              "startLine": 5,
+              "endLine": 9
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-assign-ticket",
+      "repoId": "medium-python",
+      "intent": "How does assign_ticket choose an agent?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "assign_ticket picks the agent with the lowest load and sets ticket.assigned_to to that agent id.",
+        "mustIncludeFiles": [
+          "src/triage.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "The selection uses min(agents, key=lambda item: item[1]).",
+          "ticket.assigned_to is updated with the chosen agent id."
+        ],
+        "mustNotClaim": [
+          "Assignment is random or round-robin."
+        ],
+        "acceptableVariations": [
+          "The agent with the smallest load number is selected and assigned to the ticket."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "assign-ticket",
+            "kind": "file",
+            "label": "assign_ticket",
+            "path": "src/triage.py",
+            "location": {
+              "startLine": 27,
+              "endLine": 30
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-open-ticket-flow",
+      "repoId": "medium-python",
+      "intent": "Describe the key steps in open_ticket.",
+      "category": "architectural",
+      "difficulty": "hard",
+      "correctAnswer": {
+        "summary": "open_ticket checks rate limits, validates the requester and policy rules, classifies severity, creates an open Ticket, stores it, and records a ticket.open audit entry.",
+        "mustIncludeFiles": [
+          "src/service.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/rate_limit.py",
+          "src/policy.py",
+          "src/triage.py",
+          "src/store.py"
+        ],
+        "mustIncludeFacts": [
+          "check_rate_limit runs before user/policy checks.",
+          "A Ticket is created with status 'open' and stored in data.tickets, then audit action 'ticket.open' is recorded."
+        ],
+        "mustNotClaim": [
+          "open_ticket sends notifications or closes tickets."
+        ],
+        "acceptableVariations": [
+          "Flow: rate limit → user/policy validation → severity classification → create/store ticket → audit."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "open-ticket",
+            "kind": "file",
+            "label": "open_ticket pipeline",
+            "path": "src/service.py",
+            "location": {
+              "startLine": 16,
+              "endLine": 49
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-open-ticket-audit",
+      "repoId": "medium-python",
+      "intent": "What audit metadata is recorded when a ticket is opened?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "open_ticket records a ticket.open audit event with meta containing ticket_id and severity.",
+        "mustIncludeFiles": [
+          "src/service.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/store.py"
+        ],
+        "mustIncludeFacts": [
+          "The audit action is 'ticket.open'.",
+          "The meta includes ticket_id and severity."
+        ],
+        "mustNotClaim": [
+          "Audits are sent to an external logging system."
+        ],
+        "acceptableVariations": [
+          "ticket.open audits are appended with ticket_id and severity metadata."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "open-ticket-audit",
+            "kind": "file",
+            "label": "ticket.open audit meta",
+            "path": "src/service.py",
+            "location": {
+              "startLine": 44,
+              "endLine": 48
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-assign-ticket-flow",
+      "repoId": "medium-python",
+      "intent": "How does assign_ticket_flow assign and notify?",
+      "category": "architectural",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "assign_ticket_flow loads the ticket, assigns the lowest-load agent, records a ticket.assign audit, and returns an assignment notice payload.",
+        "mustIncludeFiles": [
+          "src/service.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/triage.py",
+          "src/notifications.py"
+        ],
+        "mustIncludeFacts": [
+          "The audit action is 'ticket.assign' with meta ticket_id.",
+          "The function returns the result of send_assignment_notice."
+        ],
+        "mustNotClaim": [
+          "Assignment changes ticket status to closed."
+        ],
+        "acceptableVariations": [
+          "The flow assigns the lowest-load agent, audits, then builds an assignment notice."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "assign-flow",
+            "kind": "file",
+            "label": "assign_ticket_flow",
+            "path": "src/service.py",
+            "location": {
+              "startLine": 52,
+              "endLine": 68
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-close-ticket",
+      "repoId": "medium-python",
+      "intent": "What happens when close_ticket is called?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "close_ticket marks the ticket status as closed and records a ticket.close audit with the actor id and ticket id.",
+        "mustIncludeFiles": [
+          "src/service.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/store.py"
+        ],
+        "mustIncludeFacts": [
+          "close_ticket sets ticket.status = 'closed'.",
+          "It records an audit action 'ticket.close' with meta ticket_id."
+        ],
+        "mustNotClaim": [
+          "close_ticket deletes the ticket."
+        ],
+        "acceptableVariations": [
+          "Closing a ticket updates status and appends a ticket.close audit entry."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "close-ticket",
+            "kind": "file",
+            "label": "close_ticket",
+            "path": "src/service.py",
+            "location": {
+              "startLine": 70,
+              "endLine": 85
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-assignment-notice",
+      "repoId": "medium-python",
+      "intent": "What fields are returned by send_assignment_notice?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "send_assignment_notice returns a dict with kind='assignment', ticket_id, agent_id, and severity.",
+        "mustIncludeFiles": [
+          "src/notifications.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "The payload includes kind, ticket_id, agent_id, and severity.",
+          "kind is set to 'assignment'."
+        ],
+        "mustNotClaim": [
+          "The notice includes user email addresses."
+        ],
+        "acceptableVariations": [
+          "Assignment notices return a simple dict with ids and severity."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "assignment-notice",
+            "kind": "file",
+            "label": "send_assignment_notice",
+            "path": "src/notifications.py",
+            "location": {
+              "startLine": 4,
+              "endLine": 10
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-sla-report",
+      "repoId": "medium-python",
+      "intent": "How does build_sla_report determine which tickets to include?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "build_sla_report iterates open tickets, computes hours_since(created_at), and includes tickets whose age is >= SLA_HOURS with ticket_id, hours_open, and severity.",
+        "mustIncludeFiles": [
+          "src/reporting.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/config.py",
+          "src/utils.py"
+        ],
+        "mustIncludeFacts": [
+          "Closed tickets are skipped.",
+          "Included entries include ticket_id, hours_open, and severity when age_hours >= SLA_HOURS."
+        ],
+        "mustNotClaim": [
+          "build_sla_report sends notifications."
+        ],
+        "acceptableVariations": [
+          "Only open tickets beyond SLA_HOURS are reported with id/hours/severity fields."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "sla-report",
+            "kind": "file",
+            "label": "build_sla_report",
+            "path": "src/reporting.py",
+            "location": {
+              "startLine": 10,
+              "endLine": 27
+            }
+          },
+          {
+            "refId": "sla-hours",
+            "kind": "file",
+            "label": "SLA_HOURS config",
+            "path": "src/config.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 2
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-sla-notifications",
+      "repoId": "medium-python",
+      "intent": "How does build_sla_notifications create SLA warning messages?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "build_sla_notifications filters open tickets, checks age against SLA_HOURS, and returns send_sla_warning payloads for tickets that exceed the SLA.",
+        "mustIncludeFiles": [
+          "src/reporting.py"
+        ],
+        "shouldIncludeFiles": [
+          "src/notifications.py"
+        ],
+        "mustIncludeFacts": [
+          "Only open tickets are considered for SLA warnings.",
+          "send_sla_warning is called with the ticket and hours_open when age_hours >= SLA_HOURS."
+        ],
+        "mustNotClaim": [
+          "It updates ticket status to closed."
+        ],
+        "acceptableVariations": [
+          "SLA warnings are generated for open tickets that exceed SLA_HOURS using send_sla_warning."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "sla-notices",
+            "kind": "file",
+            "label": "build_sla_notifications",
+            "path": "src/reporting.py",
+            "location": {
+              "startLine": 30,
+              "endLine": 40
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-add-minutes",
+      "repoId": "medium-python",
+      "intent": "Where is add_minutes defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "add_minutes is defined in src/utils.py.",
+        "mustIncludeFiles": [
+          "src/utils.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "add_minutes is defined in src/utils.py."
+        ],
+        "mustNotClaim": [
+          "add_minutes is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils.py contains the add_minutes definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "add-minutes-def",
+            "kind": "file",
+            "label": "add_minutes definition",
+            "path": "src/utils.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 18
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-allowed-roles",
+      "repoId": "medium-python",
+      "intent": "Where is ALLOWED_ROLES defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "ALLOWED_ROLES is defined in src/config.py.",
+        "mustIncludeFiles": [
+          "src/config.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "ALLOWED_ROLES is defined in src/config.py."
+        ],
+        "mustNotClaim": [
+          "ALLOWED_ROLES is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/config.py contains the ALLOWED_ROLES definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "allowed-roles-def",
+            "kind": "file",
+            "label": "ALLOWED_ROLES definition",
+            "path": "src/config.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 12
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-assign-ticket",
+      "repoId": "medium-python",
+      "intent": "Where is assign_ticket defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "assign_ticket is defined in src/triage.py.",
+        "mustIncludeFiles": [
+          "src/triage.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "assign_ticket is defined in src/triage.py."
+        ],
+        "mustNotClaim": [
+          "assign_ticket is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/triage.py contains the assign_ticket definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "assign-ticket-def",
+            "kind": "file",
+            "label": "assign_ticket definition",
+            "path": "src/triage.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-assign-ticket-flow",
+      "repoId": "medium-python",
+      "intent": "Where is assign_ticket_flow defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "assign_ticket_flow is defined in src/service.py.",
+        "mustIncludeFiles": [
+          "src/service.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "assign_ticket_flow is defined in src/service.py."
+        ],
+        "mustNotClaim": [
+          "assign_ticket_flow is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/service.py contains the assign_ticket_flow definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "assign-ticket-flow-def",
+            "kind": "file",
+            "label": "assign_ticket_flow definition",
+            "path": "src/service.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 86
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-audit-event",
+      "repoId": "medium-python",
+      "intent": "Where is AuditEvent defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "AuditEvent is defined in src/models.py.",
+        "mustIncludeFiles": [
+          "src/models.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "AuditEvent is defined in src/models.py."
+        ],
+        "mustNotClaim": [
+          "AuditEvent is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/models.py contains the AuditEvent definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "audit-event-def",
+            "kind": "file",
+            "label": "AuditEvent definition",
+            "path": "src/models.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 40
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-authenticate",
+      "repoId": "medium-python",
+      "intent": "Where is authenticate defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "authenticate is defined in src/auth.py.",
+        "mustIncludeFiles": [
+          "src/auth.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "authenticate is defined in src/auth.py."
+        ],
+        "mustNotClaim": [
+          "authenticate is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth.py contains the authenticate definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "authenticate-def",
+            "kind": "file",
+            "label": "authenticate definition",
+            "path": "src/auth.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 46
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-auth-error",
+      "repoId": "medium-python",
+      "intent": "Where is AuthError defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "AuthError is defined in src/auth.py.",
+        "mustIncludeFiles": [
+          "src/auth.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "AuthError is defined in src/auth.py."
+        ],
+        "mustNotClaim": [
+          "AuthError is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth.py contains the AuthError definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "auth-error-def",
+            "kind": "file",
+            "label": "AuthError definition",
+            "path": "src/auth.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 46
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-authorization-error",
+      "repoId": "medium-python",
+      "intent": "Where is AuthorizationError defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "AuthorizationError is defined in src/auth.py.",
+        "mustIncludeFiles": [
+          "src/auth.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "AuthorizationError is defined in src/auth.py."
+        ],
+        "mustNotClaim": [
+          "AuthorizationError is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth.py contains the AuthorizationError definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "authorization-error-def",
+            "kind": "file",
+            "label": "AuthorizationError definition",
+            "path": "src/auth.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 46
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-build-sla-notifications",
+      "repoId": "medium-python",
+      "intent": "Where is build_sla_notifications defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "build_sla_notifications is defined in src/reporting.py.",
+        "mustIncludeFiles": [
+          "src/reporting.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "build_sla_notifications is defined in src/reporting.py."
+        ],
+        "mustNotClaim": [
+          "build_sla_notifications is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/reporting.py contains the build_sla_notifications definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "build-sla-notifications-def",
+            "kind": "file",
+            "label": "build_sla_notifications definition",
+            "path": "src/reporting.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 42
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-build-sla-report",
+      "repoId": "medium-python",
+      "intent": "Where is build_sla_report defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "build_sla_report is defined in src/reporting.py.",
+        "mustIncludeFiles": [
+          "src/reporting.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "build_sla_report is defined in src/reporting.py."
+        ],
+        "mustNotClaim": [
+          "build_sla_report is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/reporting.py contains the build_sla_report definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "build-sla-report-def",
+            "kind": "file",
+            "label": "build_sla_report definition",
+            "path": "src/reporting.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 42
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-can-open-ticket",
+      "repoId": "medium-python",
+      "intent": "Where is can_open_ticket defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "can_open_ticket is defined in src/policy.py.",
+        "mustIncludeFiles": [
+          "src/policy.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "can_open_ticket is defined in src/policy.py."
+        ],
+        "mustNotClaim": [
+          "can_open_ticket is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/policy.py contains the can_open_ticket definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "can-open-ticket-def",
+            "kind": "file",
+            "label": "can_open_ticket definition",
+            "path": "src/policy.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 15
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-check-rate-limit",
+      "repoId": "medium-python",
+      "intent": "Where is check_rate_limit defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "check_rate_limit is defined in src/rate_limit.py.",
+        "mustIncludeFiles": [
+          "src/rate_limit.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "check_rate_limit is defined in src/rate_limit.py."
+        ],
+        "mustNotClaim": [
+          "check_rate_limit is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/rate_limit.py contains the check_rate_limit definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "check-rate-limit-def",
+            "kind": "file",
+            "label": "check_rate_limit definition",
+            "path": "src/rate_limit.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 29
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-classify-severity",
+      "repoId": "medium-python",
+      "intent": "Where is classify_severity defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "classify_severity is defined in src/triage.py.",
+        "mustIncludeFiles": [
+          "src/triage.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "classify_severity is defined in src/triage.py."
+        ],
+        "mustNotClaim": [
+          "classify_severity is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/triage.py contains the classify_severity definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "classify-severity-def",
+            "kind": "file",
+            "label": "classify_severity definition",
+            "path": "src/triage.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-close-ticket",
+      "repoId": "medium-python",
+      "intent": "Where is close_ticket defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "close_ticket is defined in src/service.py.",
+        "mustIncludeFiles": [
+          "src/service.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "close_ticket is defined in src/service.py."
+        ],
+        "mustNotClaim": [
+          "close_ticket is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/service.py contains the close_ticket definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "close-ticket-def",
+            "kind": "file",
+            "label": "close_ticket definition",
+            "path": "src/service.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 86
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-compute-priority",
+      "repoId": "medium-python",
+      "intent": "Where is compute_priority defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "compute_priority is defined in src/triage.py.",
+        "mustIncludeFiles": [
+          "src/triage.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "compute_priority is defined in src/triage.py."
+        ],
+        "mustNotClaim": [
+          "compute_priority is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/triage.py contains the compute_priority definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "compute-priority-def",
+            "kind": "file",
+            "label": "compute_priority definition",
+            "path": "src/triage.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-create-token",
+      "repoId": "medium-python",
+      "intent": "Where is create_token defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "create_token is defined in src/auth.py.",
+        "mustIncludeFiles": [
+          "src/auth.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "create_token is defined in src/auth.py."
+        ],
+        "mustNotClaim": [
+          "create_token is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/auth.py contains the create_token definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "create-token-def",
+            "kind": "file",
+            "label": "create_token definition",
+            "path": "src/auth.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 46
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-get-store",
+      "repoId": "medium-python",
+      "intent": "Where is get_store defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "get_store is defined in src/store.py.",
+        "mustIncludeFiles": [
+          "src/store.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "get_store is defined in src/store.py."
+        ],
+        "mustNotClaim": [
+          "get_store is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/store.py contains the get_store definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "get-store-def",
+            "kind": "file",
+            "label": "get_store definition",
+            "path": "src/store.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 47
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-hours-since",
+      "repoId": "medium-python",
+      "intent": "Where is hours_since defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "hours_since is defined in src/utils.py.",
+        "mustIncludeFiles": [
+          "src/utils.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "hours_since is defined in src/utils.py."
+        ],
+        "mustNotClaim": [
+          "hours_since is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/utils.py contains the hours_since definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "hours-since-def",
+            "kind": "file",
+            "label": "hours_since definition",
+            "path": "src/utils.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 18
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-in-memory-store",
+      "repoId": "medium-python",
+      "intent": "Where is InMemoryStore defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "InMemoryStore is defined in src/store.py.",
+        "mustIncludeFiles": [
+          "src/store.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "InMemoryStore is defined in src/store.py."
+        ],
+        "mustNotClaim": [
+          "InMemoryStore is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/store.py contains the InMemoryStore definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "in-memory-store-def",
+            "kind": "file",
+            "label": "InMemoryStore definition",
+            "path": "src/store.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 47
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "mp-symbol-keywords",
+      "repoId": "medium-python",
+      "intent": "Where is KEYWORDS defined in the medium-python repository?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "KEYWORDS is defined in src/triage.py.",
+        "mustIncludeFiles": [
+          "src/triage.py"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "KEYWORDS is defined in src/triage.py."
+        ],
+        "mustNotClaim": [
+          "KEYWORDS is defined in a different file."
+        ],
+        "acceptableVariations": [
+          "src/triage.py contains the KEYWORDS definition."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "keywords-def",
+            "kind": "file",
+            "label": "KEYWORDS definition",
+            "path": "src/triage.py",
+            "location": {
+              "startLine": 1,
+              "endLine": 31
+            }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    }
+  ]
+}

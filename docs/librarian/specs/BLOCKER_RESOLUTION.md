@@ -107,6 +107,8 @@ function foo(x: string) { ... }
 
 ## Test Blockers
 
+**CRITICAL: Test failures are PRIORITY ZERO. Fix them before any other work.**
+
 ### Test file not found
 ```bash
 # Create the test file
@@ -138,6 +140,39 @@ test('slow test', async () => { ... }, 30000);
   ```
 - **Tier-2**: Let it fail with honest error, document in STATUS.md
 
+### `requireProviders` in Tier-0 test (test_tiering_guard failure)
+**Error**: `test_tiering_guard.test.ts` fails because a test file uses `requireProviders` but is in Tier-0.
+
+**Resolution**:
+1. Open the offending test file (identified in error message)
+2. Choose ONE of these fixes:
+   - **Remove provider dependency**: If test doesn't actually need providers, remove the `requireProviders` call
+   - **Move to Tier-1**: Add proper skip logic:
+     ```typescript
+     import { requireProviders } from '../test_utils';
+
+     describe('feature', () => {
+       beforeAll(() => {
+         if (!requireProviders()) {
+           return; // Will skip in Tier-0
+         }
+       });
+       // ... tests
+     });
+     ```
+   - **Mock the provider**: Replace real provider with mock for deterministic behavior
+
+### Assertion count/value mismatch
+**Error**: `expected X to be greater than or equal to Y` or similar assertion failures.
+
+**Resolution**:
+1. Understand what the test is checking
+2. Determine if the expectation or implementation is wrong:
+   - **Implementation wrong**: Fix the code to produce expected output
+   - **Test expectation wrong**: Update the test to match correct behavior
+3. Run the specific test to verify: `npm test -- --run path/to/test.ts`
+4. Run full suite to check for regressions: `npm test -- --run`
+
 ### Mock not working
 ```typescript
 // Use vi.mock at top of file
@@ -156,6 +191,13 @@ vi.spyOn(object, 'method').mockReturnValue(value);
 npm test -- --run --update
 # If not, fix the code to match expected output
 ```
+
+### Multiple test failures after a change
+**Resolution**:
+1. Run `git diff` to see what changed
+2. Identify if one change broke multiple tests
+3. Fix the root cause, not each symptom
+4. Consider reverting if change was wrong
 
 ---
 
@@ -346,6 +388,58 @@ git commit -m "docs(specs): add resolution for [blocker type]"
 
 ---
 
+## Evaluation Blockers
+
+### "Need human annotation for ground truth"
+**Resolution**: Use machine-verifiable ground truth instead:
+1. AST parsing for structural facts (function definitions, imports, call graphs)
+2. TypeScript compiler for type information
+3. Test execution for behavioral verification
+4. Consistency checking across query variants
+
+See: `docs/librarian/specs/track-eval-machine-verifiable.md`
+
+### "All eval repos are synthetic / created by model"
+**Resolution**: This is INVALID evaluation. Clone real external repos:
+```bash
+# Find recent, obscure TypeScript repos
+gh search repos --language=typescript --created=">2024-06-01" --stars="10..100" --limit=20
+```
+
+**Requirements for valid eval repos:**
+- NOT created by AI/model being evaluated
+- Real open-source projects from GitHub
+- Preferably recent (post-training cutoff) or obscure (low stars)
+- Must have actual source code, not just scaffolding
+
+### "Can't verify semantic claims automatically"
+**Resolution**: Focus on verifiable claims:
+- Existence claims → file/line existence check
+- Structural claims → AST verification
+- Behavioral claims → test execution
+- Consistency → multi-query comparison
+
+Leave subjective claims unverified but disclosed.
+
+---
+
+## 🛑 ACTIVE HARD STOP: Circular Evaluation (2026-01-26)
+
+**The evaluation corpus is INVALID.** `eval-corpus/repos/*` are synthetic directories, not real git repos.
+
+**Verification:**
+```bash
+cd eval-corpus/repos/small-typescript && git remote -v
+# (empty - no remote origin)
+```
+
+**Resolution:** Execute WU-801-REAL to clone REAL repos from GitHub.
+See `/HARD_STOP.md` for detailed instructions.
+
+**Do NOT proceed to WU-1001 or any Phase 9/10 work until this is resolved.**
+
+---
+
 ## Meta-Rule
 
 **If a blocker seems insurmountable:**
@@ -357,6 +451,7 @@ git commit -m "docs(specs): add resolution for [blocker type]"
    - API key auth
    - Silent degradation
    - Theater (fake tests)
+   - Circular evaluation (model evaluating its own outputs) ← **CURRENTLY ACTIVE**
    - 3+ consecutive failures on same task
 
-**Only these 5 things should stop you. Everything else has a resolution.**
+**Only these things should stop you. Everything else has a resolution.**

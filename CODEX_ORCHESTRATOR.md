@@ -140,41 +140,59 @@ WHILE Full Build Charter NOT satisfied:
 
 ---
 
+## 🛑 HARD STOP — CIRCULAR EVALUATION ACTIVE
+
+**THE EVALUATION CORPUS IS INVALID. STOP CURRENT WORK.**
+
+**Problem:** `eval-corpus/repos/` contains synthetic directories, NOT real git repos.
+```bash
+$ cd eval-corpus/repos/small-typescript && git remote -v
+# (empty - no remote, not a real cloned repo)
+```
+
+**This violates HARD STOP #5: Circular evaluation (model evaluating its own outputs)**
+
+**Required Action:**
+1. STOP whatever work unit you are currently on
+2. Execute WU-801-REAL: Clone ACTUAL repos from GitHub
+3. Verify each has git history: `git log --oneline -3`
+4. Only THEN resume Phase 9/10 work
+
+---
+
 ## MASTER STATE (Track This)
 
 ```
-CURRENT_PHASE: 8
-COMPLETED_UNITS: [WU-001, WU-002, WU-003, WU-004, WU-101, WU-102, WU-103, WU-104, WU-201, WU-202, WU-203, WU-204, WU-301, WU-302, WU-303, WU-304, WU-401, WU-402, WU-403, WU-501, WU-502, WU-503, WU-601, WU-602, WU-603, WU-701, WU-702, WU-703]
+CURRENT_PHASE: 8 (BLOCKED - must complete WU-801-REAL first)
+COMPLETED_UNITS: [WU-001...WU-703, WU-906, WU-907, WU-908]
 IN_PROGRESS_UNITS: []
-BLOCKED_UNITS: []
-INVALID_UNITS: [WU-801-OLD, WU-802-OLD, WU-803-OLD, WU-804-OLD, WU-805-OLD, WU-806-OLD]
-FAILING_TESTS: [
-  "confidence_calibration_validation.test.ts - ECE 0.183 vs expected < 0.15"
-]
-NEXT_UNITS: [WU-FIX-CAL, WU-801]
+BLOCKED_UNITS: [WU-1001, WU-1002, WU-1003...] (blocked on WU-801-REAL)
+INVALID_UNITS: [WU-801-OLD, WU-802-OLD, WU-803-OLD, WU-804-OLD, WU-805-OLD, WU-806-OLD, ALL-PHASE-9-10-WORK]
+FAILING_TESTS: []
+HARD_STOP: CIRCULAR_EVALUATION
+NEXT_UNITS: [WU-801-REAL]
 NOTES: |
-  Phase 8 WU-801-806 were completed but are INVALID - used synthetic AI-generated repos.
-  This is circular evaluation. Must redo with REAL external repos.
-  See: docs/librarian/specs/track-eval-machine-verifiable.md
+  🛑 HARD STOP ACTIVE: Circular evaluation detected.
 
-  NEW EVALUATION FRAMEWORK (Phases 8-10):
-  - Phase 8: Machine-verifiable ground truth from REAL repos via AST extraction
-  - Phase 9: A/B testing workers WITH vs WITHOUT Librarian (human-style prompts)
-  - Phase 10: Scientific self-improvement loop (AutoSD/RLVR research-based)
+  eval-corpus/repos/* are NOT real repos. They have no git remotes.
+  All Phase 9/10 work built on this invalid foundation is INVALID.
 
-  KEY SPECS:
-  - docs/librarian/specs/track-eval-machine-verifiable.md
-  - docs/librarian/specs/track-eval-agent-performance.md
-  - docs/librarian/specs/track-eval-scientific-loop.md
+  MUST DO NOW:
+  1. mkdir -p eval-corpus/external-repos
+  2. gh search repos --language=typescript --created=">2024-06-01" --stars="10..100"
+  3. Clone 5+ REAL repos with actual git history
+  4. Create manifest.json documenting provenance
+  5. THEN resume scientific loop work
 ```
 
-**CRITICAL: FAILING_TESTS must be empty before continuing to new work units.**
+**CRITICAL: HARD_STOP must be resolved before ANY other work.**
 
 ### Immediate Action Required
 
-1. **Run tests**: `npm test -- --run`
-2. **If tests fail**: Create WU-FIX-XXX and fix immediately
-3. **Then continue to WU-801**: Clone REAL external repos (not AI-generated)
+1. **STOP** current Phase 10 work (WU-1001 etc.)
+2. **Execute WU-801-REAL**: Clone real external repos
+3. **Verify**: Each repo has `git remote -v` showing real origin
+4. **Only then** continue to Phase 9/10
 
 Update this state after each work unit completes.
 

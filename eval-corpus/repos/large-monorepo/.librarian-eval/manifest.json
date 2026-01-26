@@ -1,0 +1,17 @@
+{
+  "repoId": "large-monorepo",
+  "name": "Large Monorepo Fixture",
+  "languages": [
+    "TypeScript",
+    "Python",
+    "Go"
+  ],
+  "fileCount": 14,
+  "annotationLevel": "sparse",
+  "characteristics": {
+    "documentationDensity": "low",
+    "testCoverage": "low",
+    "architecturalClarity": "complex",
+    "codeQuality": "legacy"
+  }
+}

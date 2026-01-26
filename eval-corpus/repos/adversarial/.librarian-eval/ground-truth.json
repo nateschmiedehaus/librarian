@@ -1,0 +1,641 @@
+{
+  "version": "0.1.0",
+  "repoId": "adversarial",
+  "queries": [
+    {
+      "queryId": "adv-storage-in-memory",
+      "repoId": "adversarial",
+      "intent": "Where are users and sessions stored, and what backs the storage?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "Users and sessions are stored in memory via Map collections inside the singleton DbState in src/storage/db.ts.",
+        "mustIncludeFiles": ["src/storage/db.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "DbState defines users and sessions as Map collections.",
+          "getDb returns the singleton in-memory DbState."
+        ],
+        "mustNotClaim": [
+          "User or session data is stored in Postgres or another external database."
+        ],
+        "acceptableVariations": [
+          "The repo uses a singleton in-memory DbState with Map-backed users and sessions."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "db-state",
+            "kind": "file",
+            "label": "DbState maps for users and sessions",
+            "path": "src/storage/db.ts",
+            "location": { "startLine": 1, "endLine": 16 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-save-user-deletes",
+      "repoId": "adversarial",
+      "intent": "What does saveUser do and does it persist updates?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "saveUser deletes the user from db.users instead of persisting updates.",
+        "mustIncludeFiles": ["src/storage/userStore.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": ["saveUser calls db.users.delete(user.id)."],
+        "mustNotClaim": ["saveUser writes or updates the user in storage."],
+        "acceptableVariations": [
+          "The saveUser helper removes the user entry rather than storing changes."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "save-user",
+            "kind": "file",
+            "label": "saveUser deletes from map",
+            "path": "src/storage/userStore.ts",
+            "location": { "startLine": 4, "endLine": 8 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-deactivate-user-effect",
+      "repoId": "adversarial",
+      "intent": "After calling deactivateUser, is the user stored as inactive?",
+      "category": "impact",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "deactivateUser builds an inactive user but then calls saveUser, which deletes the record; it returns the updated object while removing it from storage.",
+        "mustIncludeFiles": [
+          "src/services/userService.ts",
+          "src/storage/userStore.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "deactivateUser sets active: false before calling saveUser.",
+          "saveUser deletes the user from db.users."
+        ],
+        "mustNotClaim": ["The user remains stored with active=false."],
+        "acceptableVariations": [
+          "The deactivate flow returns an inactive user object but removes the entry from the map."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "deactivate-user",
+            "kind": "file",
+            "label": "deactivateUser builds inactive user",
+            "path": "src/services/userService.ts",
+            "location": { "startLine": 15, "endLine": 22 }
+          },
+          {
+            "refId": "save-user",
+            "kind": "file",
+            "label": "saveUser deletes from map",
+            "path": "src/storage/userStore.ts",
+            "location": { "startLine": 4, "endLine": 8 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-create-session-fields",
+      "repoId": "adversarial",
+      "intent": "What fields does createSession set and how is expiry calculated?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "createSession sets id, userId, createdAt, and expiresAt using addDays(createdAt, config.sessionTtlDays), then stores the session in the in-memory map.",
+        "mustIncludeFiles": [
+          "src/storage/sessionStore.ts",
+          "src/config.ts"
+        ],
+        "shouldIncludeFiles": ["src/utils/date.ts"],
+        "mustIncludeFacts": [
+          "expiresAt is computed with addDays(createdAt, config.sessionTtlDays).",
+          "The session is stored in getDb().sessions."
+        ],
+        "mustNotClaim": ["Sessions are JWTs stored in Redis."],
+        "acceptableVariations": [
+          "Session creation stamps createdAt and derives expiresAt from config.sessionTtlDays before storing it in memory."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "create-session",
+            "kind": "file",
+            "label": "createSession fields",
+            "path": "src/storage/sessionStore.ts",
+            "location": { "startLine": 6, "endLine": 15 }
+          },
+          {
+            "refId": "config-session-ttl",
+            "kind": "file",
+            "label": "sessionTtlDays config",
+            "path": "src/config.ts",
+            "location": { "startLine": 1, "endLine": 5 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-archive-session",
+      "repoId": "adversarial",
+      "intent": "What does archiveSession do?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "archiveSession deletes the session from the in-memory sessions map; there is no archival storage.",
+        "mustIncludeFiles": ["src/storage/sessionStore.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": ["archiveSession calls getDb().sessions.delete(sessionId)."],
+        "mustNotClaim": ["archiveSession writes sessions to disk or cold storage."],
+        "acceptableVariations": [
+          "The archive helper simply removes the session entry from memory."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "archive-session",
+            "kind": "file",
+            "label": "archiveSession deletes session",
+            "path": "src/storage/sessionStore.ts",
+            "location": { "startLine": 18, "endLine": 20 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-audit-adapter-selection",
+      "repoId": "adversarial",
+      "intent": "How is the audit adapter selected for recordAudit?",
+      "category": "architectural",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "recordAudit loads an adapter by config.auditAdapter via loadAuditAdapter; if the name is not in the static map, loadAuditAdapter falls back to a dynamic require.",
+        "mustIncludeFiles": [
+          "src/services/auditService.ts",
+          "src/adapters/audit/loader.ts",
+          "src/config.ts"
+        ],
+        "shouldIncludeFiles": ["src/adapters/audit/index.ts"],
+        "mustIncludeFacts": [
+          "recordAudit calls loadAuditAdapter(config.auditAdapter).",
+          "loadAuditAdapter uses dynamic require when the adapter name is not in auditAdapterMap."
+        ],
+        "mustNotClaim": ["Adapters are hard-coded with no dynamic loading."],
+        "acceptableVariations": [
+          "Adapter selection is driven by config.auditAdapter and can fall back to a dynamic require for unknown names."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "record-audit",
+            "kind": "file",
+            "label": "recordAudit loads adapter",
+            "path": "src/services/auditService.ts",
+            "location": { "startLine": 1, "endLine": 9 }
+          },
+          {
+            "refId": "load-audit-adapter",
+            "kind": "file",
+            "label": "dynamic adapter require",
+            "path": "src/adapters/audit/loader.ts",
+            "location": { "startLine": 4, "endLine": 11 }
+          },
+          {
+            "refId": "config-audit-adapter",
+            "kind": "file",
+            "label": "auditAdapter config",
+            "path": "src/config.ts",
+            "location": { "startLine": 1, "endLine": 5 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-audit-adapters",
+      "repoId": "adversarial",
+      "intent": "Which audit adapters are built in and what do they do?",
+      "category": "structural",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "The built-in adapters are console and file; console logs audit events and file buffers them in memory.",
+        "mustIncludeFiles": [
+          "src/adapters/audit/index.ts",
+          "src/adapters/audit/consoleAdapter.ts",
+          "src/adapters/audit/fileAdapter.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "auditAdapterMap exposes console and file adapters.",
+          "fileAdapter pushes events into an in-memory buffer."
+        ],
+        "mustNotClaim": ["An S3 or queue adapter is built in."],
+        "acceptableVariations": [
+          "Only console and file adapters ship with the repo, and file adapter just buffers events."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "audit-adapter-map",
+            "kind": "file",
+            "label": "auditAdapterMap entries",
+            "path": "src/adapters/audit/index.ts",
+            "location": { "startLine": 5, "endLine": 11 }
+          },
+          {
+            "refId": "console-adapter",
+            "kind": "file",
+            "label": "console adapter logs",
+            "path": "src/adapters/audit/consoleAdapter.ts",
+            "location": { "startLine": 4, "endLine": 7 }
+          },
+          {
+            "refId": "file-adapter",
+            "kind": "file",
+            "label": "file adapter buffers events",
+            "path": "src/adapters/audit/fileAdapter.ts",
+            "location": { "startLine": 4, "endLine": 13 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-audit-storage",
+      "repoId": "adversarial",
+      "intent": "Where are audit events stored after recordAudit?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "recordAudit pushes the event into the in-memory db.audits array after writing through the adapter.",
+        "mustIncludeFiles": [
+          "src/services/auditService.ts",
+          "src/storage/db.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "recordAudit calls getDb().audits.push(event).",
+          "DbState defines audits as an array."
+        ],
+        "mustNotClaim": ["Audit events are written to S3 or an external queue."],
+        "acceptableVariations": [
+          "Audit events are appended to the in-memory audits array after adapter write."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "record-audit",
+            "kind": "file",
+            "label": "recordAudit writes to audits array",
+            "path": "src/services/auditService.ts",
+            "location": { "startLine": 6, "endLine": 9 }
+          },
+          {
+            "refId": "db-audits",
+            "kind": "file",
+            "label": "DbState audits array",
+            "path": "src/storage/db.ts",
+            "location": { "startLine": 3, "endLine": 12 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-crypto-encryption",
+      "repoId": "adversarial",
+      "intent": "Does encryptPayload implement AES-256-GCM?",
+      "category": "security",
+      "difficulty": "hard",
+      "correctAnswer": {
+        "summary": "No. encryptPayload is just base64 encoding via Buffer and does not perform AES-256-GCM encryption.",
+        "mustIncludeFiles": ["src/utils/crypto.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": ["encryptPayload uses Buffer.from(...).toString('base64')."],
+        "mustNotClaim": ["encryptPayload performs AES-256-GCM encryption."],
+        "acceptableVariations": [
+          "The implementation is base64 encoding, not real encryption."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "encrypt-payload",
+            "kind": "file",
+            "label": "encryptPayload implementation",
+            "path": "src/utils/crypto.ts",
+            "location": { "startLine": 1, "endLine": 4 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-password-hash",
+      "repoId": "adversarial",
+      "intent": "What hashing algorithm does hashPassword use?",
+      "category": "security",
+      "difficulty": "hard",
+      "correctAnswer": {
+        "summary": "hashPassword uses MD5 via crypto.createHash, despite the comment referencing bcrypt.",
+        "mustIncludeFiles": ["src/legacy/crypto.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": ["hashPassword calls createHash('md5')."],
+        "mustNotClaim": ["hashPassword uses bcrypt."],
+        "acceptableVariations": [
+          "The password hash helper is MD5-based, not bcrypt."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "hash-password",
+            "kind": "file",
+            "label": "hashPassword uses md5",
+            "path": "src/legacy/crypto.ts",
+            "location": { "startLine": 1, "endLine": 5 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-retention-window",
+      "repoId": "adversarial",
+      "intent": "What retention window is actually used for audits?",
+      "category": "behavioral",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "getRetentionWindowDays returns config.retentionDays, which is set to 7 days.",
+        "mustIncludeFiles": [
+          "src/services/retentionPolicy.ts",
+          "src/config.ts"
+        ],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "getRetentionWindowDays returns config.retentionDays.",
+          "config.retentionDays is 7."
+        ],
+        "mustNotClaim": ["Retention is 30 days by default."],
+        "acceptableVariations": [
+          "Retention is configured to seven days despite the misleading comment."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "retention-policy",
+            "kind": "file",
+            "label": "retention policy uses config",
+            "path": "src/services/retentionPolicy.ts",
+            "location": { "startLine": 1, "endLine": 5 }
+          },
+          {
+            "refId": "config-retention",
+            "kind": "file",
+            "label": "retentionDays config",
+            "path": "src/config.ts",
+            "location": { "startLine": 1, "endLine": 5 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-legacy-cleanup-disabled",
+      "repoId": "adversarial",
+      "intent": "Is legacy cleanup enabled and does it remove expired sessions?",
+      "category": "impact",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "Legacy cleanup is disabled: ENABLE_LEGACY_CLEANUP is false, so runLegacyCleanup returns 0 and skips deleting sessions.",
+        "mustIncludeFiles": ["src/legacy/cleanup.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "ENABLE_LEGACY_CLEANUP is false.",
+          "runLegacyCleanup returns 0 when disabled."
+        ],
+        "mustNotClaim": ["Expired sessions are always purged by legacy cleanup."],
+        "acceptableVariations": [
+          "The cleanup job is effectively a no-op because the enable flag is false."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "legacy-cleanup",
+            "kind": "file",
+            "label": "legacy cleanup disabled",
+            "path": "src/legacy/cleanup.ts",
+            "location": { "startLine": 3, "endLine": 9 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-email-normalization",
+      "repoId": "adversarial",
+      "intent": "How does normalizeEmailStrict differ from normalizeEmail?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "normalizeEmailStrict trims/lowercases like normalizeEmail but also strips plus-address suffixes using a regex replacement.",
+        "mustIncludeFiles": ["src/utils/validation.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "normalizeEmailStrict replaces /\\+.*@/ with '@'.",
+          "normalizeEmail only trims and lowercases."
+        ],
+        "mustNotClaim": ["normalizeEmailStrict performs MX or domain validation."],
+        "acceptableVariations": [
+          "Strict normalization removes plus aliases in addition to trim/lowercase."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "email-normalization",
+            "kind": "file",
+            "label": "normalizeEmail vs normalizeEmailStrict",
+            "path": "src/utils/validation.ts",
+            "location": { "startLine": 1, "endLine": 10 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-bootstrap-demo-flow",
+      "repoId": "adversarial",
+      "intent": "What actions does bootstrapDemo perform on a user and session?",
+      "category": "architectural",
+      "difficulty": "moderate",
+      "correctAnswer": {
+        "summary": "bootstrapDemo registers an admin user, creates a session, records an audit event, archives the session, and deactivates the user.",
+        "mustIncludeFiles": ["src/index.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "bootstrapDemo calls registerUser and createSession.",
+          "It calls recordAudit, archiveSession, and deactivateUser."
+        ],
+        "mustNotClaim": ["bootstrapDemo writes to Postgres or calls HTTP APIs."],
+        "acceptableVariations": [
+          "The demo flow registers a user, creates a session, audits it, then archives the session and deactivates the user."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "bootstrap-demo",
+            "kind": "file",
+            "label": "bootstrapDemo flow",
+            "path": "src/index.ts",
+            "location": { "startLine": 1, "endLine": 16 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-docs-mismatch-storage",
+      "repoId": "adversarial",
+      "intent": "Do the README and ARCHITECTURE docs match the actual storage implementation?",
+      "category": "architectural",
+      "difficulty": "hard",
+      "correctAnswer": {
+        "summary": "No. The docs describe Postgres/queue storage, but the code uses an in-memory DbState with Map collections and no Postgres implementation.",
+        "mustIncludeFiles": [
+          "README.md",
+          "docs/ARCHITECTURE.md",
+          "src/storage/db.ts"
+        ],
+        "shouldIncludeFiles": [
+          ".librarian-eval/annotations/architecture.md"
+        ],
+        "mustIncludeFacts": [
+          "README claims PostgreSQL storage and AES-256-GCM encryption.",
+          "ARCHITECTURE.md references storage/postgres.ts and a session archiver.",
+          "DbState uses Map-backed in-memory storage."
+        ],
+        "mustNotClaim": ["A postgres client implementation exists in this repo."],
+        "acceptableVariations": [
+          "The docs are outdated; the actual storage is in-memory and Map-based."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "readme-postgres",
+            "kind": "doc",
+            "label": "README Postgres claim",
+            "path": "README.md",
+            "location": { "startLine": 3, "endLine": 4 }
+          },
+          {
+            "refId": "readme-arch",
+            "kind": "doc",
+            "label": "README architecture bullets",
+            "path": "README.md",
+            "location": { "startLine": 6, "endLine": 10 }
+          },
+          {
+            "refId": "arch-doc",
+            "kind": "doc",
+            "label": "Outdated architecture doc",
+            "path": "docs/ARCHITECTURE.md",
+            "location": { "startLine": 3, "endLine": 9 }
+          },
+          {
+            "refId": "db-state",
+            "kind": "file",
+            "label": "DbState maps for users and sessions",
+            "path": "src/storage/db.ts",
+            "location": { "startLine": 1, "endLine": 16 }
+          },
+          {
+            "refId": "adversarial-architecture",
+            "kind": "annotation",
+            "label": "Verified mismatch notes",
+            "path": ".librarian-eval/annotations/architecture.md",
+            "location": { "startLine": 1, "endLine": 13 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-corporate-email-checks",
+      "repoId": "adversarial",
+      "intent": "How do isCorporateEmail and isCorporateEmailLoose differ?",
+      "category": "behavioral",
+      "difficulty": "trivial",
+      "correctAnswer": {
+        "summary": "isCorporateEmail checks for an @corp.example suffix, while isCorporateEmailLoose just checks for the substring.",
+        "mustIncludeFiles": ["src/utils/validation.ts"],
+        "shouldIncludeFiles": [],
+        "mustIncludeFacts": [
+          "isCorporateEmail uses endsWith('@corp.example').",
+          "isCorporateEmailLoose uses includes('@corp.example')."
+        ],
+        "mustNotClaim": ["Both functions use identical checks."],
+        "acceptableVariations": [
+          "One function requires a strict suffix match; the loose variant only checks for a substring."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "corp-email-checks",
+            "kind": "file",
+            "label": "corporate email checks",
+            "path": "src/utils/validation.ts",
+            "location": { "startLine": 12, "endLine": 17 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    },
+    {
+      "queryId": "adv-dead-code-cleanup",
+      "repoId": "adversarial",
+      "intent": "Which cleanup function is effectively dead code?",
+      "category": "impact",
+      "difficulty": "hard",
+      "correctAnswer": {
+        "summary": "runLegacyCleanup is effectively dead code because ENABLE_LEGACY_CLEANUP is false, so the function returns early without action.",
+        "mustIncludeFiles": ["src/legacy/cleanup.ts"],
+        "shouldIncludeFiles": [".librarian-eval/annotations/adversarial-traps.md"],
+        "mustIncludeFacts": [
+          "ENABLE_LEGACY_CLEANUP is false.",
+          "runLegacyCleanup returns 0 when disabled."
+        ],
+        "mustNotClaim": ["The cleanup routine is executed by default."],
+        "acceptableVariations": [
+          "Legacy cleanup is disabled at the flag check, so the rest of the function never runs."
+        ],
+        "evidenceRefs": [
+          {
+            "refId": "legacy-cleanup",
+            "kind": "file",
+            "label": "legacy cleanup disabled",
+            "path": "src/legacy/cleanup.ts",
+            "location": { "startLine": 3, "endLine": 9 }
+          },
+          {
+            "refId": "adversarial-traps",
+            "kind": "annotation",
+            "label": "trap list",
+            "path": ".librarian-eval/annotations/adversarial-traps.md",
+            "location": { "startLine": 1, "endLine": 7 }
+          }
+        ]
+      },
+      "lastVerified": "2026-01-26",
+      "verifiedBy": "codex"
+    }
+  ]
+}

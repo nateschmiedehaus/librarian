@@ -24,27 +24,38 @@ Implement the complete Librarian spec system from current state to 100% completi
 
 ---
 
-## Step 2: Check Current State
+## Step 2: Check Current State and Fix Any Failures
 
 ```bash
 cd /Volumes/BigSSD4/nathanielschmiedehaus/Documents/software/librarian
 npm install    # Ensure dependencies
-npm test -- --run   # Check baseline
-npx tsc --noEmit    # Check types
+npm test -- --run   # Check baseline — MUST HAVE 0 FAILURES
+npx tsc --noEmit    # Check types — MUST HAVE 0 ERRORS
 ```
+
+**CRITICAL: If ANY tests fail, fix them BEFORE doing anything else.**
+
+Check CODEX_ORCHESTRATOR.md for FAILING_TESTS in MASTER STATE. If non-empty:
+1. Fix those tests first (WU-FIX-XXX work units)
+2. Run full test suite again
+3. Only proceed when all tests pass
 
 ---
 
 ## Step 3: Begin Orchestration Loop
 
-1. Identify the first incomplete work unit (see CODEX_ORCHESTRATOR.md)
-2. If sub-agents available: spawn up to 3 concurrent sub-agents
-3. If sequential: execute work units one by one
-4. After each work unit:
-   - Verify: tests pass, types compile
-   - Update: STATUS.md, GATES.json
+1. **FIRST**: Verify all tests pass (`npm test -- --run` shows 0 failures)
+2. Check CODEX_ORCHESTRATOR.md MASTER STATE for FAILING_TESTS
+3. If FAILING_TESTS is non-empty: fix them first (Priority 0)
+4. Identify the next incomplete work unit
+5. If sub-agents available: spawn up to 3 concurrent sub-agents
+6. If sequential: execute work units one by one
+7. After each work unit:
+   - Run FULL test suite (not just specific tests)
+   - Verify: ALL tests pass, types compile
+   - Update: STATUS.md, GATES.json, MASTER STATE
    - Continue: next work unit
-5. **Do not stop until Full Build Charter is satisfied**
+8. **Do not stop until Full Build Charter is satisfied**
 
 ---
 
@@ -55,8 +66,12 @@ npx tsc --noEmit    # Check types
 - Stop on a blocker (see `docs/librarian/specs/BLOCKER_RESOLUTION.md`)
 - Wait between work units
 - Summarize and ask "should I continue?"
+- Proceed to new work when tests are failing
+- Mark a work unit complete if full test suite doesn't pass
 
 **ALWAYS:**
+- Fix test failures FIRST (Priority 0)
+- Run FULL test suite after every work unit
 - Fix blockers immediately
 - Continue to next work unit automatically
 - Update tracking after every work unit

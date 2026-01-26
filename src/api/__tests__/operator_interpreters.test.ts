@@ -2,8 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   __testing,
   evaluateOperatorCondition,
+  SequenceOperatorInterpreter,
   ParallelOperatorInterpreter,
+  MergeOperatorInterpreter,
+  FanoutOperatorInterpreter,
+  FaninOperatorInterpreter,
   RetryOperatorInterpreter,
+  BackoffOperatorInterpreter,
   QuorumOperatorInterpreter,
   FallbackOperatorInterpreter,
   ConsensusOperatorInterpreter,
@@ -11,6 +16,10 @@ import {
   ConditionalOperatorInterpreter,
   LoopOperatorInterpreter,
   CircuitBreakerOperatorInterpreter,
+  ReduceOperatorInterpreter,
+  CacheOperatorInterpreter,
+  ReplayOperatorInterpreter,
+  MonitorOperatorInterpreter,
 } from '../operator_interpreters.js';
 import type { TechniqueComposition, TechniqueOperator, TechniquePrimitive } from '../../strategic/techniques.js';
 import type { OperatorContext } from '../operator_interpreters.js';
@@ -562,5 +571,215 @@ describe('operator interpreters', () => {
     );
     expect(success.type).toBe('continue');
     nowSpy.mockRestore();
+  });
+
+  it('enforces sequence ordering', async () => {
+    const interpreter = new SequenceOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_sequence',
+      type: 'sequence',
+      inputs: ['tp_one', 'tp_two'],
+    };
+    const context = buildOperatorContext(operator);
+    await interpreter.beforeExecute(context);
+    const primitiveTwo: TechniquePrimitive = { ...primitive, id: 'tp_two', name: 'Two' };
+    const outOfOrder = await interpreter.afterPrimitiveExecute(
+      primitiveTwo,
+      buildResult({ primitiveId: 'tp_two' }),
+      context
+    );
+    expect(outOfOrder.type).toBe('terminate');
+
+    const orderedContext = buildOperatorContext(operator);
+    await interpreter.beforeExecute(orderedContext);
+    const first = await interpreter.afterPrimitiveExecute(
+      primitive,
+      buildResult({ primitiveId: 'tp_one' }),
+      orderedContext
+    );
+    expect(first.type).toBe('continue');
+    const second = await interpreter.afterPrimitiveExecute(
+      primitiveTwo,
+      buildResult({ primitiveId: 'tp_two' }),
+      orderedContext
+    );
+    expect(second.type).toBe('continue');
+    if (second.type === 'continue') {
+      expect(second.outputs.sequenceCompleted).toBe(true);
+    }
+  });
+
+  it('merges outputs with merge operator', async () => {
+    const interpreter = new MergeOperatorInterpreter();
+    const operator: TechniqueOperator = { id: 'op_merge', type: 'merge' };
+    const context = buildOperatorContext(operator);
+    const output = await interpreter.afterExecute([
+      buildResult({ primitiveId: 'tp_a', output: { value: 1 } }),
+      buildResult({ primitiveId: 'tp_b', output: { value: 2 } }),
+    ], context);
+    expect(output.type).toBe('continue');
+    if (output.type === 'continue') {
+      const merged = output.outputs.merge_op_merge as Record<string, unknown> | undefined;
+      expect(merged?.value).toEqual([1, 2]);
+    }
+  });
+
+  it('rejects merge collisions when configured', async () => {
+    const interpreter = new MergeOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_merge_reject',
+      type: 'merge',
+      parameters: { mergeStrategy: 'reject' },
+    };
+    const context = buildOperatorContext(operator);
+    const output = await interpreter.afterExecute([
+      buildResult({ primitiveId: 'tp_a', output: { value: 1 } }),
+      buildResult({ primitiveId: 'tp_b', output: { value: 2 } }),
+    ], context);
+    expect(output.type).toBe('checkpoint');
+  });
+
+  it('records fanout payloads', async () => {
+    const interpreter = new FanoutOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_fanout',
+      type: 'fanout',
+      inputs: ['tp_one'],
+      outputs: ['tp_two', 'tp_three'],
+    };
+    const context = buildOperatorContext(operator);
+    await interpreter.beforeExecute(context);
+    await interpreter.afterPrimitiveExecute(primitive, buildResult({ output: { value: 7 } }), context);
+    const output = await interpreter.afterExecute([
+      buildResult({ primitiveId: 'tp_one', output: { value: 7 } }),
+    ], context);
+    expect(output.type).toBe('continue');
+    if (output.type === 'continue') {
+      const payload = output.outputs.fanout_op_fanout as { payload?: { value?: number } } | undefined;
+      expect(payload?.payload?.value).toBe(7);
+    }
+  });
+
+  it('collects fanin results', async () => {
+    const interpreter = new FaninOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_fanin',
+      type: 'fanin',
+      inputs: ['tp_one', 'tp_two'],
+      outputs: ['tp_three'],
+    };
+    const context = buildOperatorContext(operator);
+    const output = await interpreter.afterExecute([
+      buildResult({ primitiveId: 'tp_one', output: { value: 1 } }),
+      buildResult({ primitiveId: 'tp_two', output: { value: 2 } }),
+    ], context);
+    expect(output.type).toBe('continue');
+    if (output.type === 'continue') {
+      const entries = output.outputs.fanin_op_fanin as Array<{ primitiveId: string }> | undefined;
+      expect(entries?.length).toBe(2);
+    }
+  });
+
+  it('reduces numeric outputs', async () => {
+    const interpreter = new ReduceOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_reduce',
+      type: 'reduce',
+      parameters: { reducer: 'sum', field: 'value' },
+    };
+    const context = buildOperatorContext(operator);
+    const output = await interpreter.afterExecute([
+      buildResult({ primitiveId: 'tp_a', output: { value: 2 } }),
+      buildResult({ primitiveId: 'tp_b', output: { value: 3 } }),
+    ], context);
+    expect(output.type).toBe('continue');
+    if (output.type === 'continue') {
+      const reduced = output.outputs.reduce_op_reduce as { value?: number } | undefined;
+      expect(reduced?.value).toBe(5);
+    }
+  });
+
+  it('backs off on failures with limits', async () => {
+    const interpreter = new BackoffOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_backoff',
+      type: 'backoff',
+      parameters: { baseDelayMs: 100, multiplier: 2, maxAttempts: 1 },
+    };
+    const context = buildOperatorContext(operator);
+    const first = await interpreter.afterPrimitiveExecute(
+      primitive,
+      buildResult({ status: 'failed' }),
+      context
+    );
+    expect(first.type).toBe('retry');
+    const second = await interpreter.afterPrimitiveExecute(
+      primitive,
+      buildResult({ status: 'failed' }),
+      context
+    );
+    expect(second.type).toBe('terminate');
+  });
+
+  it('serves cached outputs when available', async () => {
+    const interpreter = new CacheOperatorInterpreter();
+    const operator: TechniqueOperator = { id: 'op_cache', type: 'cache' };
+    const context = buildOperatorContext(operator);
+    const initial = await interpreter.beforeExecute(context);
+    expect(initial.type).toBe('continue');
+    if (initial.type === 'continue') {
+      expect(initial.outputs.cacheHit).toBe(false);
+    }
+    await interpreter.afterPrimitiveExecute(
+      primitive,
+      buildResult({ output: { cached: true } }),
+      context
+    );
+    const second = await interpreter.beforeExecute(context);
+    expect(second.type).toBe('continue');
+    if (second.type === 'continue') {
+      expect(second.outputs.cacheHit).toBe(true);
+    }
+    expect(context.executionState.cached).toBe(true);
+  });
+
+  it('hydrates replay state and reports completion', async () => {
+    const interpreter = new ReplayOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_replay',
+      type: 'replay',
+      parameters: { replayId: 'rp_1', state: { restored: true } },
+    };
+    const context = buildOperatorContext(operator);
+    const before = await interpreter.beforeExecute(context);
+    expect(before.type).toBe('continue');
+    expect(context.executionState.restored).toBe(true);
+    const after = await interpreter.afterExecute([
+      buildResult({ primitiveId: 'tp_one', output: { value: 1 } }),
+    ], context);
+    expect(after.type).toBe('continue');
+    if (after.type === 'continue') {
+      expect(after.outputs.replayCompleted).toBe(true);
+    }
+  });
+
+  it('summarizes monitor results', async () => {
+    const interpreter = new MonitorOperatorInterpreter();
+    const operator: TechniqueOperator = {
+      id: 'op_monitor',
+      type: 'monitor',
+      parameters: { signals: ['latency', 'error_rate'] },
+    };
+    const context = buildOperatorContext(operator);
+    const output = await interpreter.afterExecute([
+      buildResult({ primitiveId: 'tp_a', status: 'success' }),
+      buildResult({ primitiveId: 'tp_b', status: 'failed' }),
+    ], context);
+    expect(output.type).toBe('continue');
+    if (output.type === 'continue') {
+      const summary = output.outputs.monitorSummary as { failed?: number; total?: number } | undefined;
+      expect(summary?.failed).toBe(1);
+      expect(summary?.total).toBe(2);
+    }
   });
 });

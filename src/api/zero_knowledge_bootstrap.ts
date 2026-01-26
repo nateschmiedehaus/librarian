@@ -1,9 +1,13 @@
+import type { ConfidenceValue } from '../epistemics/confidence.js';
+import { absent, getEffectiveConfidence, isConfidenceValue } from '../epistemics/confidence.js';
+
 export type KnowledgeSource = 'syntactic' | 'naming' | 'structural' | 'behavioral' | 'semantic';
 
 export interface KnowledgeClaim {
   claim: string;
   source: KnowledgeSource;
-  confidence: number;
+  confidence: ConfidenceValue;
+  signalStrength: number;
   evidence: string;
 }
 
@@ -17,7 +21,7 @@ export interface KnowledgeState {
 export interface BootstrapPhase {
   name: string;
   goal: string;
-  confidence: number | 'varies';
+  signalStrength: number | 'varies';
   steps: string[];
   outputs: string[];
   failureMode: string;
@@ -50,7 +54,8 @@ export interface EvidenceSource {
 export interface EvidenceBasedConfidence {
   claim: string;
   evidenceSources: EvidenceSource[];
-  confidence: number;
+  confidence: ConfidenceValue;
+  signalStrength: number;
   calibrationMethod: 'no_evidence' | 'contradictory_evidence' | 'combining_agreement';
 }
 
@@ -67,7 +72,8 @@ export interface ProgressiveUnderstanding {
 export interface KnowledgeAtLevel {
   level: UnderstandingLevel;
   claim: string;
-  confidence: number;
+  confidence: ConfidenceValue;
+  signalStrength: number;
   evidence: string;
   verificationMethod: KnowledgeSource;
 }
@@ -91,7 +97,7 @@ export interface EpistemicEscalationOptions {
 }
 
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
-const MAX_CONFIDENCE = 0.95;
+const MAX_SIGNAL_STRENGTH = 0.95;
 const SOURCE_RELIABILITY: Record<KnowledgeSource, number> = {
   syntactic: 1.0,
   naming: 0.6,
@@ -104,7 +110,7 @@ export const ZERO_KNOWLEDGE_PROTOCOL: BootstrapPhase[] = [
   {
     name: 'structural_inventory',
     goal: 'Enumerate what exists without interpreting meaning',
-    confidence: 1.0,
+    signalStrength: 1.0,
     steps: [
       'Count files by extension (establish language mix)',
       'Parse all parseable files to AST (structural extraction)',
@@ -118,7 +124,7 @@ export const ZERO_KNOWLEDGE_PROTOCOL: BootstrapPhase[] = [
   {
     name: 'naming_inference',
     goal: 'Infer likely purposes from naming conventions',
-    confidence: 0.6,
+    signalStrength: 0.6,
     steps: [
       'Classify files by naming pattern (test, config, util, model, etc.)',
       'Infer function purposes from verb-noun patterns',
@@ -131,7 +137,7 @@ export const ZERO_KNOWLEDGE_PROTOCOL: BootstrapPhase[] = [
   {
     name: 'structural_inference',
     goal: 'Infer architecture from structural patterns',
-    confidence: 0.5,
+    signalStrength: 0.5,
     steps: [
       'Detect directory-based modules',
       'Identify potential MVC/layered patterns',
@@ -144,7 +150,7 @@ export const ZERO_KNOWLEDGE_PROTOCOL: BootstrapPhase[] = [
   {
     name: 'behavioral_probing',
     goal: 'Observe behavior to verify structural inferences',
-    confidence: 0.8,
+    signalStrength: 0.8,
     steps: [
       'Attempt to build/compile (verify buildability)',
       'Run existing tests (verify current health)',
@@ -157,7 +163,7 @@ export const ZERO_KNOWLEDGE_PROTOCOL: BootstrapPhase[] = [
   {
     name: 'semantic_extraction',
     goal: 'Extract meaning using LLM reasoning',
-    confidence: 0.7,
+    signalStrength: 0.7,
     steps: [
       'Summarize each file purpose',
       'Extract entity purposes',
@@ -170,7 +176,7 @@ export const ZERO_KNOWLEDGE_PROTOCOL: BootstrapPhase[] = [
   {
     name: 'verification_loop',
     goal: 'Verify inferences and calibrate confidence',
-    confidence: 'varies',
+    signalStrength: 'varies',
     steps: [
       'Cross-check inferences against behavioral observations',
       'Identify contradictions between phases',
@@ -225,7 +231,13 @@ export function computeEvidenceBasedConfidence(
   sources: EvidenceSource[]
 ): EvidenceBasedConfidence {
   if (sources.length === 0) {
-    return { claim, evidenceSources: [], confidence: 0.5, calibrationMethod: 'no_evidence' };
+    return {
+      claim,
+      evidenceSources: [],
+      confidence: absent('uncalibrated'),
+      signalStrength: 0.5,
+      calibrationMethod: 'no_evidence',
+    };
   }
 
   const normalized = sources.map(normalizeEvidenceSource);
@@ -237,7 +249,8 @@ export function computeEvidenceBasedConfidence(
     return {
       claim,
       evidenceSources: normalized,
-      confidence: clampNumber(0.5 + netEvidence * 0.3, 0.1, 0.5),
+      confidence: absent('uncalibrated'),
+      signalStrength: clampNumber(0.5 + netEvidence * 0.3, 0.1, 0.5),
       calibrationMethod: 'contradictory_evidence',
     };
   }
@@ -252,7 +265,8 @@ export function computeEvidenceBasedConfidence(
   return {
     claim,
     evidenceSources: normalized,
-    confidence: Math.min(MAX_CONFIDENCE, combined),
+    confidence: absent('uncalibrated'),
+    signalStrength: Math.min(MAX_SIGNAL_STRENGTH, combined),
     calibrationMethod: 'combining_agreement',
   };
 }
@@ -270,6 +284,7 @@ export function reportUnderstanding(state: KnowledgeState): ProgressiveUnderstan
       level: 1,
       claim: fact.claim,
       confidence: fact.confidence,
+      signalStrength: resolveSignalStrength(fact),
       evidence: fact.evidence,
       verificationMethod: 'syntactic',
     })),
@@ -277,6 +292,7 @@ export function reportUnderstanding(state: KnowledgeState): ProgressiveUnderstan
       level: inferenceLevel(fact),
       claim: fact.claim,
       confidence: fact.confidence,
+      signalStrength: resolveSignalStrength(fact),
       evidence: fact.evidence,
       verificationMethod: fact.source,
     })),
@@ -384,10 +400,18 @@ function normalizeClaim(claim?: KnowledgeClaim | null): KnowledgeClaim | null {
   if (!isKnowledgeSource(claim.source)) return null;
   const evidence = typeof claim.evidence === 'string' ? claim.evidence.trim() : '';
   if (!evidence) return null;
+  const candidate = claim as { confidence?: unknown; signalStrength?: unknown };
+  const confidenceValue = isConfidenceValue(candidate.confidence)
+    ? candidate.confidence
+    : absent('uncalibrated');
+  const signalStrength = Number.isFinite(candidate.signalStrength)
+    ? clampNumber(candidate.signalStrength as number, 0, 1)
+    : 0.5;
   return {
     claim: claim.claim.trim(),
     source: claim.source,
-    confidence: clampNumber(claim.confidence, 0, 1),
+    confidence: confidenceValue,
+    signalStrength,
     evidence,
   };
 }
@@ -417,7 +441,7 @@ function mergeClaims(existing: KnowledgeClaim[], incoming: KnowledgeClaim[]): Kn
   for (const claim of incoming) {
     const key = `${claim.source}:${claim.claim}`;
     const prior = merged.get(key);
-    if (!prior || claim.confidence > prior.confidence) {
+    if (!prior || resolveSignalStrength(claim) > resolveSignalStrength(prior)) {
       merged.set(key, claim);
     }
   }
@@ -504,12 +528,19 @@ function computeTaskConfidence(state: KnowledgeState): number {
   if (claims.length === 0) return 0.5;
   const total = claims.reduce((sum, claim) => {
     const reliability = SOURCE_RELIABILITY[claim.source] ?? 0.5;
-    return sum + clampNumber(claim.confidence, 0, 1) * reliability;
+    return sum + resolveSignalStrength(claim) * reliability;
   }, 0);
   const base = total / claims.length;
   const contradictionPenalty = Math.min(0.4, state.contradictions.length * 0.1);
   const unknownPenalty = Math.min(0.3, state.unknowns.length * 0.02);
   return clampNumber(base - contradictionPenalty - unknownPenalty, 0, 1);
+}
+
+function resolveSignalStrength(claim: KnowledgeClaim): number {
+  if (Number.isFinite(claim.signalStrength)) {
+    return clampNumber(claim.signalStrength, 0, 1);
+  }
+  return clampNumber(getEffectiveConfidence(claim.confidence), 0, 1);
 }
 
 function findAlternativeAnalysisMethods(state: KnowledgeState): string[] {

@@ -36,11 +36,11 @@ import type {
   Contradiction,
   ClaimId,
   Claim,
-  DecomposedConfidence,
+  ClaimSignalStrength,
 } from './types.js';
 import { EVIDENCE_GRAPH_SCHEMA_VERSION } from './types.js';
 import type { ConfidenceValue } from './confidence.js';
-import { deterministic, bounded } from './confidence.js';
+import { absent, deterministic, bounded } from './confidence.js';
 
 // ============================================================================
 // TYPES
@@ -506,12 +506,16 @@ export class DefeaterLedgerBridge {
         id: 'ledger',
         type: 'llm' as const, // Default to llm as a common source
       },
-      confidence: {
+      confidence: absent('uncalibrated'),
+      signalStrength: {
         overall: 0.8,
+        retrieval: 0.8,
         structural: 0.8,
         semantic: 0.8,
+        testExecution: 0.8,
         recency: 0.8,
-      } as DecomposedConfidence,
+        aggregationMethod: 'geometric_mean',
+      } as ClaimSignalStrength,
       status: 'active',
       createdAt: entry.timestamp.toISOString(),
       schemaVersion: EVIDENCE_GRAPH_SCHEMA_VERSION,

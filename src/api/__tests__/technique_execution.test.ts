@@ -324,7 +324,7 @@ describe('technique execution engine', () => {
     expect(branchEvent?.detail?.target).toBe(primitiveB.id);
   });
 
-  it('emits coverage gap events for noop operators', async () => {
+  it('does not emit coverage gap events for implemented operators', async () => {
     const primitive = createTechniquePrimitive({
       id: 'tp_gap',
       name: 'Gap primitive',
@@ -368,7 +368,7 @@ describe('technique execution engine', () => {
     }
 
     const gapEvent = events.find((event) => event.type === 'operator_coverage_gap');
-    expect(gapEvent?.detail?.reason).toBe('noop_interpreter');
+    expect(gapEvent).toBeUndefined();
   });
 
   it('loops primitives until conditions are met', async () => {

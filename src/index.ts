@@ -59,6 +59,13 @@ export {
   createFileQuery,
   createRelatedQuery,
 } from './api/query.js';
+export {
+  executeQueryPipeline,
+} from './api/execution_pipeline.js';
+export type {
+  ExecutionPipelineOptions,
+  ExecutionPipelineResult,
+} from './api/execution_pipeline.js';
 export { applyCalibrationToPacks, computeUncertaintyMetrics, getConfidenceCalibration, summarizeCalibration } from './api/confidence_calibration.js';
 export {
   ASPECT_TO_PRIMITIVES,
@@ -333,6 +340,8 @@ export {
   createDefeater as createDefeaterType,
   createContradiction,
   EVIDENCE_GRAPH_SCHEMA_VERSION,
+  ClaimOutcomeTracker,
+  createClaimOutcomeTracker,
 } from './epistemics/index.js';
 
 export type {
@@ -393,6 +402,10 @@ export type {
   DefeaterLedgerConfig,
   DefeaterDetectionEvent,
   DefeaterApplicationEvent,
+  ClaimOutcomeCategory,
+  TrackClaimInput,
+  RecordOutcomeInput,
+  ClaimOutcomeTrackerConfig,
 } from './epistemics/index.js';
 
 // Calibration Tracker (bridges measurement with epistemics)

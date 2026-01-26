@@ -82,6 +82,7 @@ const MAX_STATE_PATH_SEGMENTS = 12;
 const MAX_STATE_SEGMENT_LENGTH = 64;
 const MAX_STATE_SEGMENT_REPEAT = 4;
 const MAX_OUTPUT_KEY_LENGTH = 120;
+const MAX_OPERATOR_KEY_LENGTH = 64;
 const SAFE_SEGMENT_PATTERN = /^[a-zA-Z0-9_]+$/;
 const SAFE_NAMESPACE_PATTERN = /^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$/;
 const CONDITION_TYPE_MISMATCH = 'condition_type_mismatch';
@@ -98,6 +99,8 @@ const DEFAULT_TIMEBOX_MS = 60000;
 const MAX_BACKOFF_DELAY_MS = 60000;
 const MAX_PARALLEL_COLLISIONS = 1000;
 const MAX_PARALLEL_SKIPPED_KEYS = 1000;
+const MAX_MERGE_COLLISIONS = 200;
+const MAX_MERGE_SKIPPED_KEYS = 200;
 const MAX_CONDITION_EVAL_MS = 50;
 const MAX_MIGRATION_KEYS = 100;
 const MAX_MIGRATION_DEPTH = 4;
@@ -846,6 +849,44 @@ function normalizeFailureMode(operator: TechniqueOperator): string {
   return getStringParam(operator.parameters, ['failureMode', 'mode']) ?? 'fail_fast';
 }
 
+type MergeStrategy = 'array' | 'first' | 'last' | 'reject';
+
+function normalizeMergeStrategy(operator: TechniqueOperator): MergeStrategy {
+  const strategy = getStringParam(operator.parameters, ['mergeStrategy', 'collisionStrategy', 'strategy']) ?? 'array';
+  switch (strategy) {
+    case 'first':
+    case 'last':
+    case 'array':
+    case 'reject':
+      return strategy;
+    default:
+      return 'array';
+  }
+}
+
+function sanitizeOperatorKey(value: string): string {
+  if (!value) return 'operator';
+  const normalized = value.replace(/[^a-zA-Z0-9_]/g, '_');
+  if (!normalized) return 'operator';
+  return normalized.length > MAX_OPERATOR_KEY_LENGTH
+    ? normalized.slice(0, MAX_OPERATOR_KEY_LENGTH)
+    : normalized;
+}
+
+function resolveOperatorOutputKey(operator: TechniqueOperator, prefix: string): string {
+  const candidate = getStringParam(operator.parameters, ['outputKey', 'targetKey', 'resultKey']);
+  const safe = candidate ? sanitizeOutputKey(candidate) : null;
+  if (safe) return safe;
+  return `${prefix}_${sanitizeOperatorKey(operator.id)}`;
+}
+
+function mergeIntoState(target: Record<string, unknown>, output: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(output)) {
+    if (isForbiddenStateKey(key)) continue;
+    target[key] = value;
+  }
+}
+
 function ensureOutputs(outputs: Record<string, unknown> | undefined): Record<string, unknown> {
   return outputs ?? {};
 }
@@ -1097,6 +1138,359 @@ export class NoopOperatorInterpreter implements OperatorInterpreter {
 
   async afterExecute(): Promise<OperatorExecutionResult> {
     return { type: 'continue', outputs: {} };
+  }
+}
+
+export class SequenceOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'sequence';
+
+  async beforeExecute(context: OperatorContext): Promise<OperatorExecutionResult> {
+    const operatorState = getOperatorState(context);
+    if (!Array.isArray(operatorState.sequenceInputs)) {
+      operatorState.sequenceInputs = context.operator.inputs?.slice() ?? [];
+      operatorState.sequenceIndex = 0;
+    }
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterPrimitiveExecute(
+    primitive: TechniquePrimitive,
+    _result: PrimitiveExecutionResult,
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const inputs = context.operator.inputs ?? [];
+    if (inputs.length === 0) {
+      return { type: 'continue', outputs: {} };
+    }
+    const operatorState = getOperatorState(context);
+    const index = (operatorState.sequenceIndex as number | undefined) ?? 0;
+    const expected = inputs[index];
+    if (expected && primitive.id !== expected) {
+      return {
+        type: 'terminate',
+        reason: `Sequence order violation: expected ${expected} but saw ${primitive.id}`,
+        graceful: true,
+      };
+    }
+    const position = index + 1;
+    operatorState.sequenceIndex = position;
+    const outputs: Record<string, unknown> = {
+      sequencePosition: position,
+      sequenceLength: inputs.length,
+    };
+    if (position >= inputs.length) {
+      outputs.sequenceCompleted = true;
+    }
+    return { type: 'continue', outputs };
+  }
+
+  async afterExecute(
+    results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const inputs = context.operator.inputs ?? [];
+    return {
+      type: 'continue',
+      outputs: {
+        sequenceCompleted: true,
+        sequenceLength: inputs.length,
+        sequenceResults: results.length,
+      },
+    };
+  }
+}
+
+type MergeSummary = {
+  merged: Record<string, unknown>;
+  collisions: string[];
+  skipped: Array<{ key: string; primitiveId: string; reason: string }>;
+  collisionOverflow: boolean;
+  skippedOverflow: boolean;
+  rejected?: { reason: string; detail: Record<string, unknown> };
+};
+
+function mergeResultOutputs(
+  results: PrimitiveExecutionResult[],
+  strategy: MergeStrategy
+): MergeSummary {
+  const merged: Record<string, unknown> = Object.create(null);
+  const collisions: string[] = [];
+  const skipped: Array<{ key: string; primitiveId: string; reason: string }> = [];
+  let collisionOverflow = false;
+  let skippedOverflow = false;
+
+  for (const result of results) {
+    if (!result.output || typeof result.output !== 'object' || result.output === null) continue;
+    for (const [key, value] of Object.entries(result.output)) {
+      const safeKey = sanitizeOutputKey(key);
+      if (!safeKey) {
+        if (skipped.length < MAX_MERGE_SKIPPED_KEYS) {
+          skipped.push({ key, primitiveId: result.primitiveId, reason: 'invalid_key' });
+        } else {
+          skippedOverflow = true;
+        }
+        continue;
+      }
+      if (!Object.prototype.hasOwnProperty.call(merged, safeKey)) {
+        merged[safeKey] = value;
+        continue;
+      }
+      if (collisions.length < MAX_MERGE_COLLISIONS) {
+        collisions.push(safeKey);
+      } else {
+        collisionOverflow = true;
+      }
+      if (strategy === 'reject') {
+        return {
+          merged,
+          collisions,
+          skipped,
+          collisionOverflow,
+          skippedOverflow,
+          rejected: {
+            reason: 'merge_collision',
+            detail: { key: safeKey, primitiveId: result.primitiveId },
+          },
+        };
+      }
+      if (strategy === 'array') {
+        const existing = merged[safeKey];
+        if (!isMergeSafeValue(existing) || !isMergeSafeValue(value)) {
+          return {
+            merged,
+            collisions,
+            skipped,
+            collisionOverflow,
+            skippedOverflow,
+            rejected: {
+              reason: 'merge_unsafe_value',
+              detail: { key: safeKey, primitiveId: result.primitiveId },
+            },
+          };
+        }
+        if (Array.isArray(existing)) {
+          merged[safeKey] = [...existing, value];
+        } else {
+          merged[safeKey] = [existing, value];
+        }
+        continue;
+      }
+      if (strategy === 'last') {
+        merged[safeKey] = value;
+      }
+    }
+  }
+
+  return { merged, collisions, skipped, collisionOverflow, skippedOverflow };
+}
+
+export class MergeOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'merge';
+
+  async beforeExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterPrimitiveExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterExecute(
+    results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const strategy = normalizeMergeStrategy(context.operator);
+    const summary = mergeResultOutputs(results, strategy);
+    if (summary.rejected) {
+      const state: Record<string, unknown> = Object.create(null);
+      state.mergeStrategy = strategy;
+      state.mergeReason = summary.rejected.reason;
+      state.mergeDetail = summary.rejected.detail;
+      state.mergePartial = sanitizeCheckpointRecord(summary.merged);
+      state.mergeCollisions = summary.collisions;
+      state.mergeSkippedKeys = summary.skipped;
+      if (summary.collisionOverflow) state.mergeCollisionOverflow = true;
+      if (summary.skippedOverflow) state.mergeSkippedOverflow = true;
+      return {
+        type: 'checkpoint',
+        reason: 'Merge operator collision',
+        state,
+        terminate: true,
+      };
+    }
+    const outputKey = resolveOperatorOutputKey(context.operator, 'merge');
+    const outputs: Record<string, unknown> = Object.create(null);
+    outputs[outputKey] = summary.merged;
+    outputs.mergeStrategy = strategy;
+    outputs.mergeCollisionCount = summary.collisions.length;
+    if (summary.collisions.length > 0) outputs.mergeCollisions = summary.collisions;
+    outputs.mergeSkippedCount = summary.skipped.length;
+    if (summary.skipped.length > 0) outputs.mergeSkippedKeys = summary.skipped;
+    if (summary.collisionOverflow) outputs.mergeCollisionOverflow = true;
+    if (summary.skippedOverflow) outputs.mergeSkippedOverflow = true;
+    return { type: 'continue', outputs };
+  }
+}
+
+export class FanoutOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'fanout';
+
+  async beforeExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterPrimitiveExecute(
+    primitive: TechniquePrimitive,
+    result: PrimitiveExecutionResult,
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const inputs = context.operator.inputs ?? [];
+    if (inputs[0] === primitive.id) {
+      const operatorState = getOperatorState(context);
+      operatorState.fanoutPayload = result.output;
+    }
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterExecute(
+    results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const outputKey = resolveOperatorOutputKey(context.operator, 'fanout');
+    const inputs = context.operator.inputs ?? [];
+    const targets = context.operator.outputs ?? [];
+    const payload = results[0]?.output ?? (getOperatorState(context).fanoutPayload ?? {});
+    const outputs: Record<string, unknown> = Object.create(null);
+    outputs[outputKey] = {
+      source: inputs[0] ?? null,
+      targets: targets.slice(),
+      payload,
+    };
+    outputs.fanoutTargets = targets.slice();
+    outputs.fanoutSource = inputs[0] ?? null;
+    return { type: 'continue', outputs };
+  }
+}
+
+export class FaninOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'fanin';
+
+  async beforeExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterPrimitiveExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterExecute(
+    results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const outputKey = resolveOperatorOutputKey(context.operator, 'fanin');
+    const sanitized = sanitizeCheckpointOutputs(
+      results.map((result) => ({ primitiveId: result.primitiveId, output: result.output }))
+    );
+    const outputs: Record<string, unknown> = Object.create(null);
+    outputs[outputKey] = sanitized.entries;
+    outputs.faninCount = sanitized.entries.length;
+    if (sanitized.truncated) {
+      outputs.faninTruncated = true;
+      outputs.faninTruncations = sanitized.truncations;
+      outputs.faninCirculars = sanitized.circulars;
+    }
+    return { type: 'continue', outputs };
+  }
+}
+
+export class ReduceOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'reduce';
+
+  async beforeExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterPrimitiveExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterExecute(
+    results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const reducer = getStringParam(context.operator.parameters, ['reducer', 'aggregation', 'method']) ?? 'array';
+    const field = getStringParam(context.operator.parameters, ['field', 'key', 'sourceKey']);
+    const values: unknown[] = [];
+    for (const result of results) {
+      const output = result.output;
+      if (!output || typeof output !== 'object' || Array.isArray(output)) {
+        if (!field) values.push(output);
+        continue;
+      }
+      if (field) {
+        if (Object.prototype.hasOwnProperty.call(output, field)) {
+          values.push((output as Record<string, unknown>)[field]);
+        }
+        continue;
+      }
+      const keys = Object.keys(output);
+      if (keys.length === 1) {
+        values.push((output as Record<string, unknown>)[keys[0] ?? '']);
+      } else {
+        values.push(output);
+      }
+    }
+
+    let reduced: unknown;
+    if (reducer === 'count') {
+      reduced = values.length;
+    } else if (reducer === 'sum' || reducer === 'average' || reducer === 'min' || reducer === 'max') {
+      const numericValues = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+      if (numericValues.length === 0) {
+        reduced = null;
+      } else if (reducer === 'sum') {
+        reduced = numericValues.reduce((sum, value) => sum + value, 0);
+      } else if (reducer === 'average') {
+        reduced = numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length;
+      } else if (reducer === 'min') {
+        reduced = Math.min(...numericValues);
+      } else {
+        reduced = Math.max(...numericValues);
+      }
+    } else if (reducer === 'first') {
+      reduced = values[0];
+    } else if (reducer === 'last') {
+      reduced = values[values.length - 1];
+    } else if (reducer === 'merge') {
+      const strategy = normalizeMergeStrategy(context.operator);
+      const summary = mergeResultOutputs(results, strategy);
+      if (summary.rejected) {
+        return {
+          type: 'checkpoint',
+          reason: 'Reduce merge collision',
+          state: {
+            reduceStrategy: strategy,
+            reduceReason: summary.rejected.reason,
+            reduceDetail: summary.rejected.detail,
+            reducePartial: sanitizeCheckpointRecord(summary.merged),
+          },
+          terminate: true,
+        };
+      }
+      reduced = summary.merged;
+    } else {
+      reduced = values;
+    }
+
+    const outputKey = resolveOperatorOutputKey(context.operator, 'reduce');
+    const outputs: Record<string, unknown> = Object.create(null);
+    outputs[outputKey] = {
+      reducer,
+      field,
+      value: reduced,
+      count: values.length,
+    };
+    return { type: 'continue', outputs };
   }
 }
 
@@ -1503,6 +1897,57 @@ export class RetryOperatorInterpreter implements OperatorInterpreter {
     const delay = calculateBackoffDelay(backoff, baseDelay, retryCount, jitter);
 
     return { type: 'retry', delay, attempt: retryCount };
+  }
+
+  async afterExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+}
+
+export class BackoffOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'backoff';
+
+  async beforeExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterPrimitiveExecute(
+    primitive: TechniquePrimitive,
+    result: PrimitiveExecutionResult,
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    if (result.status !== 'failed') {
+      const operatorState = getOperatorState(context);
+      delete operatorState[`backoff_${primitive.id}`];
+      return { type: 'continue', outputs: {} };
+    }
+
+    const operatorState = getOperatorState(context);
+    const maxAttempts =
+      getNumberParam(context.operator.parameters, ['maxAttempts', 'maxRetries', 'maxBackoffAttempts'], { min: 1 }) ??
+      DEFAULT_RETRY_MAX;
+    const attempt = (operatorState[`backoff_${primitive.id}`] as number | undefined ?? 0) + 1;
+    operatorState[`backoff_${primitive.id}`] = attempt;
+    if (attempt > maxAttempts) {
+      return {
+        type: 'terminate',
+        reason: `Backoff exceeded maximum attempts (${maxAttempts})`,
+        graceful: true,
+      };
+    }
+
+    const baseDelay =
+      getNumberParam(context.operator.parameters, ['baseDelayMs', 'delayMs'], { min: 0 }) ?? DEFAULT_RETRY_DELAY_MS;
+    const multiplier =
+      getNumberParam(context.operator.parameters, ['multiplier', 'backoffMultiplier'], { min: 0.1 }) ?? 2;
+    const maxDelay =
+      getNumberParam(context.operator.parameters, ['maxDelayMs'], { min: 0 }) ?? MAX_BACKOFF_DELAY_MS;
+
+    const safeAttempt = Math.max(1, Math.min(attempt, 50));
+    let delay = baseDelay * Math.pow(multiplier, safeAttempt - 1);
+    if (!Number.isFinite(delay)) delay = MAX_BACKOFF_DELAY_MS;
+    delay = Math.max(0, Math.min(delay, MAX_BACKOFF_DELAY_MS, maxDelay));
+    return { type: 'retry', delay, attempt };
   }
 
   async afterExecute(): Promise<OperatorExecutionResult> {
@@ -2127,6 +2572,124 @@ export class PersistOperatorInterpreter implements OperatorInterpreter {
   }
 }
 
+export class MonitorOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'monitor';
+
+  async beforeExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterPrimitiveExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterExecute(
+    results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const signals = context.operator.parameters?.['signals'];
+    const counts = results.reduce(
+      (acc, result) => {
+        acc.total += 1;
+        if (result.status === 'failed') acc.failed += 1;
+        else acc.succeeded += 1;
+        acc.durationMs += result.durationMs ?? 0;
+        return acc;
+      },
+      { total: 0, failed: 0, succeeded: 0, durationMs: 0 }
+    );
+    const outputKey = resolveOperatorOutputKey(context.operator, 'monitor');
+    const outputs: Record<string, unknown> = Object.create(null);
+    outputs[outputKey] = {
+      signals,
+      totals: counts,
+      failures: results.filter((result) => result.status === 'failed')
+        .map((result) => ({ primitiveId: result.primitiveId, issues: result.issues })),
+    };
+    outputs.monitorSummary = counts;
+    return { type: 'continue', outputs };
+  }
+}
+
+export class ReplayOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'replay';
+
+  async beforeExecute(context: OperatorContext): Promise<OperatorExecutionResult> {
+    const replayId = getStringParam(context.operator.parameters, ['replayId', 'id']);
+    const state = context.operator.parameters?.['state'];
+    const outputs: Record<string, unknown> = Object.create(null);
+    if (state && typeof state === 'object' && !Array.isArray(state)) {
+      const sanitized = sanitizeCheckpointRecord(state as Record<string, unknown>);
+      outputs.replayState = sanitized;
+      mergeIntoState(context.executionState, sanitized);
+    }
+    if (replayId) outputs.replayId = replayId;
+    outputs.replayStarted = true;
+    return { type: 'continue', outputs };
+  }
+
+  async afterPrimitiveExecute(): Promise<OperatorExecutionResult> {
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterExecute(
+    results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const outputKey = resolveOperatorOutputKey(context.operator, 'replay');
+    const sanitized = sanitizeCheckpointOutputs(
+      results.map((result) => ({ primitiveId: result.primitiveId, output: result.output }))
+    );
+    const outputs: Record<string, unknown> = Object.create(null);
+    outputs[outputKey] = sanitized.entries;
+    outputs.replayCompleted = true;
+    return { type: 'continue', outputs };
+  }
+}
+
+export class CacheOperatorInterpreter implements OperatorInterpreter {
+  readonly operatorType = 'cache';
+
+  async beforeExecute(context: OperatorContext): Promise<OperatorExecutionResult> {
+    const operatorState = getOperatorState(context);
+    const cacheKey = resolveOperatorOutputKey(context.operator, 'cache');
+    const entries = operatorState.cacheEntries as Record<string, unknown> | undefined;
+    const cached = entries && Object.prototype.hasOwnProperty.call(entries, cacheKey) ? entries[cacheKey] : undefined;
+    if (cached && typeof cached === 'object' && !Array.isArray(cached)) {
+      mergeIntoState(context.executionState, cached as Record<string, unknown>);
+      return { type: 'continue', outputs: { cacheHit: true, cacheKey } };
+    }
+    return { type: 'continue', outputs: { cacheHit: false, cacheKey } };
+  }
+
+  async afterPrimitiveExecute(
+    _primitive: TechniquePrimitive,
+    result: PrimitiveExecutionResult,
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    if (result.status === 'failed') return { type: 'continue', outputs: {} };
+    const operatorState = getOperatorState(context);
+    const cacheKey = resolveOperatorOutputKey(context.operator, 'cache');
+    let entries = operatorState.cacheEntries as Record<string, unknown> | undefined;
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+      entries = Object.create(null);
+      operatorState.cacheEntries = entries;
+    }
+    entries[cacheKey] = sanitizeCheckpointRecord(ensureOutputs(result.output));
+    return { type: 'continue', outputs: {} };
+  }
+
+  async afterExecute(
+    _results: PrimitiveExecutionResult[],
+    context: OperatorContext
+  ): Promise<OperatorExecutionResult> {
+    const operatorState = getOperatorState(context);
+    const entries = operatorState.cacheEntries as Record<string, unknown> | undefined;
+    const count = entries ? Object.keys(entries).length : 0;
+    return { type: 'continue', outputs: { cacheEntries: count } };
+  }
+}
+
 const UNSERIALIZABLE_CONCLUSION_KEY = '__unserializable__';
 
 function serializeConclusion(value: unknown, _index: number): { key: string; value: unknown } {
@@ -2149,15 +2712,15 @@ export const __testing = {
 };
 
 export const DEFAULT_OPERATOR_INTERPRETERS: OperatorInterpreter[] = [
-  new NoopOperatorInterpreter('sequence'),
+  new SequenceOperatorInterpreter(),
   new ParallelOperatorInterpreter(),
   new ConditionalOperatorInterpreter(),
   new LoopOperatorInterpreter(),
   new GateOperatorInterpreter(),
   new FallbackOperatorInterpreter(),
-  new NoopOperatorInterpreter('merge'),
-  new NoopOperatorInterpreter('fanout'),
-  new NoopOperatorInterpreter('fanin'),
+  new MergeOperatorInterpreter(),
+  new FanoutOperatorInterpreter(),
+  new FaninOperatorInterpreter(),
   new RetryOperatorInterpreter(),
   new EscalateOperatorInterpreter(),
   new CheckpointOperatorInterpreter(),
@@ -2167,11 +2730,11 @@ export const DEFAULT_OPERATOR_INTERPRETERS: OperatorInterpreter[] = [
   new TimeboxedThrottleOperatorInterpreter(),
   new QuorumOperatorInterpreter(),
   new ConsensusOperatorInterpreter(),
-  new NoopOperatorInterpreter('backoff'),
+  new BackoffOperatorInterpreter(),
   new CircuitBreakerOperatorInterpreter(),
-  new NoopOperatorInterpreter('monitor'),
+  new MonitorOperatorInterpreter(),
   new PersistOperatorInterpreter(),
-  new NoopOperatorInterpreter('replay'),
-  new NoopOperatorInterpreter('cache'),
-  new NoopOperatorInterpreter('reduce'),
+  new ReplayOperatorInterpreter(),
+  new CacheOperatorInterpreter(),
+  new ReduceOperatorInterpreter(),
 ];

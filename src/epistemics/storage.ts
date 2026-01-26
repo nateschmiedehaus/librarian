@@ -24,13 +24,14 @@ import {
   type Contradiction,
   type EvidenceGraph,
   type SerializedEvidenceGraph,
-  type DecomposedConfidence,
+  type ClaimSignalStrength,
   createClaimId,
   createEmptyEvidenceGraph,
   serializeEvidenceGraph,
   deserializeEvidenceGraph,
   EVIDENCE_GRAPH_SCHEMA_VERSION,
 } from './types.js';
+import { absent } from './confidence.js';
 
 // ============================================================================
 // TYPES
@@ -46,14 +47,14 @@ export interface ClaimQueryOptions {
   subjectType?: string;
   /** Filter by subject ID */
   subjectId?: string;
-  /** Minimum confidence threshold */
-  minConfidence?: number;
+  /** Minimum signal-strength threshold */
+  minSignalStrength?: number;
   /** Maximum results */
   limit?: number;
   /** Offset for pagination */
   offset?: number;
   /** Order by field */
-  orderBy?: 'createdAt' | 'confidence' | 'status';
+  orderBy?: 'createdAt' | 'signalStrength' | 'status';
   /** Order direction */
   orderDir?: 'ASC' | 'DESC';
 }
@@ -130,7 +131,7 @@ export interface EvidenceGraphStorage {
   upsertClaims(claims: Claim[]): Promise<void>;
   deleteClaim(id: ClaimId): Promise<void>;
   updateClaimStatus(id: ClaimId, status: Claim['status']): Promise<void>;
-  updateClaimConfidence(id: ClaimId, confidence: DecomposedConfidence): Promise<void>;
+  updateClaimSignalStrength(id: ClaimId, signalStrength: ClaimSignalStrength): Promise<void>;
 
   // Edges
   getEdge(id: string): Promise<EvidenceEdge | null>;
@@ -178,7 +179,7 @@ export interface GraphStats {
   edgeCount: number;
   activeDefeaterCount: number;
   unresolvedContradictionCount: number;
-  avgConfidence: number;
+  avgSignalStrength: number;
   staleClaims: number;
 }
 
@@ -245,6 +246,7 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
         source_version TEXT,
         source_trace_id TEXT,
         status TEXT NOT NULL DEFAULT 'active',
+        confidence_json TEXT,
         confidence_overall REAL NOT NULL DEFAULT 0.5,
         confidence_retrieval REAL NOT NULL DEFAULT 0.5,
         confidence_structural REAL NOT NULL DEFAULT 0.5,
@@ -260,6 +262,15 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
       CREATE INDEX IF NOT EXISTS idx_claims_subject ON evidence_claims(subject_type, subject_id);
       CREATE INDEX IF NOT EXISTS idx_claims_confidence ON evidence_claims(confidence_overall);
     `);
+
+    // Ensure new confidence_json column exists for ConfidenceValue storage.
+    const claimColumns = this.db
+      .prepare('PRAGMA table_info(evidence_claims)')
+      .all() as Array<{ name: string }>;
+    const hasConfidenceJson = claimColumns.some((column) => column.name === 'confidence_json');
+    if (!hasConfidenceJson) {
+      this.db.exec('ALTER TABLE evidence_claims ADD COLUMN confidence_json TEXT');
+    }
 
     // Edges table
     this.db.exec(`
@@ -371,14 +382,14 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
       sql += ' AND subject_id = ?';
       params.push(options.subjectId);
     }
-    if (options.minConfidence !== undefined) {
+    if (options.minSignalStrength !== undefined) {
       sql += ' AND confidence_overall >= ?';
-      params.push(options.minConfidence);
+      params.push(options.minSignalStrength);
     }
 
     const orderBy = options.orderBy ?? 'created_at';
     const orderDir = options.orderDir ?? 'DESC';
-    sql += ` ORDER BY ${orderBy === 'confidence' ? 'confidence_overall' : orderBy === 'createdAt' ? 'created_at' : orderBy} ${orderDir}`;
+    sql += ` ORDER BY ${orderBy === 'signalStrength' ? 'confidence_overall' : orderBy === 'createdAt' ? 'created_at' : orderBy} ${orderDir}`;
 
     if (options.limit) {
       sql += ' LIMIT ?';
@@ -404,10 +415,10 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
       INSERT OR REPLACE INTO evidence_claims (
         id, proposition, type, subject_type, subject_id, subject_name, subject_location,
         source_type, source_id, source_version, source_trace_id,
-        status, confidence_overall, confidence_retrieval, confidence_structural,
+        status, confidence_json, confidence_overall, confidence_retrieval, confidence_structural,
         confidence_semantic, confidence_test_execution, confidence_recency,
         confidence_aggregation_method, schema_version, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -423,13 +434,14 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
       claim.source.version ?? null,
       claim.source.traceId ?? null,
       claim.status,
-      claim.confidence.overall,
-      claim.confidence.retrieval,
-      claim.confidence.structural,
-      claim.confidence.semantic,
-      claim.confidence.testExecution,
-      claim.confidence.recency,
-      claim.confidence.aggregationMethod,
+      JSON.stringify(claim.confidence),
+      claim.signalStrength.overall,
+      claim.signalStrength.retrieval,
+      claim.signalStrength.structural,
+      claim.signalStrength.semantic,
+      claim.signalStrength.testExecution,
+      claim.signalStrength.recency,
+      claim.signalStrength.aggregationMethod,
       claim.schemaVersion,
       claim.createdAt
     );
@@ -456,7 +468,7 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
     this.db.prepare('UPDATE evidence_claims SET status = ? WHERE id = ?').run(status, id);
   }
 
-  async updateClaimConfidence(id: ClaimId, confidence: DecomposedConfidence): Promise<void> {
+  async updateClaimSignalStrength(id: ClaimId, signalStrength: ClaimSignalStrength): Promise<void> {
     if (!this.db) throw new Error('Storage not initialized');
     this.db.prepare(`
       UPDATE evidence_claims SET
@@ -469,13 +481,13 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
         confidence_aggregation_method = ?
       WHERE id = ?
     `).run(
-      confidence.overall,
-      confidence.retrieval,
-      confidence.structural,
-      confidence.semantic,
-      confidence.testExecution,
-      confidence.recency,
-      confidence.aggregationMethod,
+      signalStrength.overall,
+      signalStrength.retrieval,
+      signalStrength.structural,
+      signalStrength.semantic,
+      signalStrength.testExecution,
+      signalStrength.recency,
+      signalStrength.aggregationMethod,
       id
     );
   }
@@ -934,7 +946,7 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
     const edgeCount = (this.db.prepare('SELECT COUNT(*) as count FROM evidence_edges').get() as { count: number }).count;
     const activeDefeaterCount = (this.db.prepare("SELECT COUNT(*) as count FROM evidence_defeaters WHERE status = 'active'").get() as { count: number }).count;
     const unresolvedContradictionCount = (this.db.prepare("SELECT COUNT(*) as count FROM evidence_contradictions WHERE status = 'unresolved'").get() as { count: number }).count;
-    const avgConfidenceRow = this.db.prepare('SELECT AVG(confidence_overall) as avg FROM evidence_claims').get() as { avg: number | null };
+    const avgSignalStrengthRow = this.db.prepare('SELECT AVG(confidence_overall) as avg FROM evidence_claims').get() as { avg: number | null };
     const staleClaims = (this.db.prepare("SELECT COUNT(*) as count FROM evidence_claims WHERE status = 'stale'").get() as { count: number }).count;
 
     return {
@@ -942,7 +954,7 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
       edgeCount,
       activeDefeaterCount,
       unresolvedContradictionCount,
-      avgConfidence: avgConfidenceRow.avg ?? 0,
+      avgSignalStrength: avgSignalStrengthRow.avg ?? 0,
       staleClaims,
     };
   }
@@ -966,14 +978,17 @@ export class SqliteEvidenceGraphStorage implements EvidenceGraphStorage {
         traceId: row.source_trace_id ?? undefined,
       },
       status: row.status as Claim['status'],
-      confidence: {
+      confidence: row.confidence_json
+        ? (JSON.parse(row.confidence_json) as Claim['confidence'])
+        : absent('uncalibrated'),
+      signalStrength: {
         overall: row.confidence_overall,
         retrieval: row.confidence_retrieval,
         structural: row.confidence_structural,
         semantic: row.confidence_semantic,
         testExecution: row.confidence_test_execution,
         recency: row.confidence_recency,
-        aggregationMethod: row.confidence_aggregation_method as DecomposedConfidence['aggregationMethod'],
+        aggregationMethod: row.confidence_aggregation_method as ClaimSignalStrength['aggregationMethod'],
       },
       schemaVersion: row.schema_version,
       createdAt: row.created_at,
@@ -1049,6 +1064,7 @@ interface ClaimRow {
   source_version: string | null;
   source_trace_id: string | null;
   status: string;
+  confidence_json: string | null;
   confidence_overall: number;
   confidence_retrieval: number;
   confidence_structural: number;

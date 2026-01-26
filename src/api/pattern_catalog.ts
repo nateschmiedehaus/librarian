@@ -3,16 +3,15 @@ import type { LearningOutcome } from './learning_loop.js';
 import { DEFAULT_TECHNIQUE_COMPOSITIONS_BY_ID } from './technique_compositions.js';
 import { DEFAULT_TECHNIQUE_PRIMITIVES_BY_ID } from './technique_library.js';
 import {
-  placeholder,
-  resolveQuantifiedValue,
-  isQuantifiedValue,
-  type QuantifiedValue,
-  type QuantifiedValueLike,
-} from '../epistemics/quantification.js';
+  absent,
+  assertConfidenceValue,
+  getNumericValue,
+  type ConfidenceValue,
+} from '../epistemics/confidence.js';
 
 export type PatternId = string & { readonly __patternId: unique symbol };
 export type PrimitiveId = string & { readonly __primitiveId: unique symbol };
-export type ConfidenceScore = QuantifiedValue & { readonly __confidenceScore: unique symbol };
+export type ConfidenceScore = ConfidenceValue & { readonly __confidenceScore: unique symbol };
 export type NonEmptyArray<T> = [T, ...T[]];
 
 export type CompositionArchetype =
@@ -45,7 +44,7 @@ export interface CompositionPattern {
 export interface Situation {
   trigger: string;
   context: string[];
-  /** Heuristic confidence in [0, 1], used for ranking situations. */
+  /** Heuristic confidence with provenance, used for ranking situations. */
   confidence: ConfidenceScore;
   examples: NonEmptyArray<string>;
 }
@@ -95,7 +94,7 @@ const MAX_LIST_ENTRIES = 128;
 type SituationInput = {
   trigger: string;
   context: string[];
-  confidence: QuantifiedValueLike;
+  confidence: ConfidenceValue;
   examples: NonEmptyArray<string>;
 };
 
@@ -151,12 +150,22 @@ function assertPrimitiveId(value: string): PrimitiveId {
   return normalized as PrimitiveId;
 }
 
-function assertConfidence(value: QuantifiedValueLike): ConfidenceScore {
-  if (!isQuantifiedValue(value)) {
-    throw new Error('unverified_by_trace(pattern_catalog_confidence_unquantified)');
+function assertConfidence(value: ConfidenceValue): ConfidenceScore {
+  assertConfidenceValue(value, 'pattern_catalog_confidence');
+  if (value.type === 'absent') {
+    return value as ConfidenceScore;
   }
-  const numeric = resolveQuantifiedValue(value);
-  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 1) {
+  if (value.type === 'bounded') {
+    if (!Number.isFinite(value.low) || !Number.isFinite(value.high) || value.low > value.high) {
+      throw new Error('unverified_by_trace(pattern_catalog_confidence_invalid)');
+    }
+    if (value.low < 0 || value.high > 1) {
+      throw new Error('unverified_by_trace(pattern_catalog_confidence_invalid)');
+    }
+    return value as ConfidenceScore;
+  }
+  const numeric = getNumericValue(value);
+  if (numeric === null || !Number.isFinite(numeric) || numeric < 0 || numeric > 1) {
     throw new Error('unverified_by_trace(pattern_catalog_confidence_invalid)');
   }
   return value as ConfidenceScore;
@@ -202,8 +211,8 @@ function normalizeEmbedding(embedding?: Float32Array | number[]): Float32Array |
   return normalized;
 }
 
-function patternConfidence(patternId: string, situationIndex: number, value: number): QuantifiedValue {
-  return placeholder(value, `PATTERN-${patternId}-S${situationIndex}`);
+function patternConfidence(_patternId: string, _situationIndex: number): ConfidenceValue {
+  return absent('uncalibrated');
 }
 
 function normalizeStringArray(values: string[], label: string, minLength = 0): string[] {
@@ -357,7 +366,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Something is broken and we need to find why',
         context: ['error message', 'failing test', 'unexpected behavior', 'regression'],
-        confidence: patternConfidence('pattern_bug_investigation', 1, 0.9),
+        confidence: patternConfidence('pattern_bug_investigation', 1),
         examples: [
           'Why is the login failing?',
           'Debug the checkout error',
@@ -432,7 +441,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'System is slow and we need to find why',
         context: ['latency increase', 'throughput decrease', 'resource exhaustion', 'timeout'],
-        confidence: patternConfidence('pattern_performance_investigation', 1, 0.85),
+        confidence: patternConfidence('pattern_performance_investigation', 1),
         examples: [
           'Why is the API slow?',
           'Find the performance bottleneck',
@@ -501,7 +510,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Code change needs validation before merge/deploy',
         context: ['pull request', 'code review', 'pre-merge', 'pre-deploy'],
-        confidence: patternConfidence('pattern_change_verification', 1, 0.95),
+        confidence: patternConfidence('pattern_change_verification', 1),
         examples: [
           'Review this PR',
           'Is this change safe?',
@@ -583,7 +592,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Preparing to release/deploy to production',
         context: ['release', 'deploy', 'ship', 'production', 'launch'],
-        confidence: patternConfidence('pattern_release_verification', 1, 0.9),
+        confidence: patternConfidence('pattern_release_verification', 1),
         examples: [
           'Is this ready to ship?',
           'Release readiness check',
@@ -661,7 +670,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Building a new feature from scratch',
         context: ['new feature', 'implement', 'build', 'create', 'add'],
-        confidence: patternConfidence('pattern_feature_construction', 1, 0.85),
+        confidence: patternConfidence('pattern_feature_construction', 1),
         examples: [
           'Add user authentication',
           'Implement the search feature',
@@ -740,7 +749,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Changing code structure without changing behavior',
         context: ['refactor', 'rename', 'extract', 'reorganize', 'clean up'],
-        confidence: patternConfidence('pattern_refactoring', 1, 0.9),
+        confidence: patternConfidence('pattern_refactoring', 1),
         examples: [
           'Refactor the auth module',
           'Extract this into a service',
@@ -809,7 +818,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Task requires multiple agents working together',
         context: ['parallel work', 'multiple files', 'complex task', 'team coordination'],
-        confidence: patternConfidence('pattern_multi_agent_task', 1, 0.8),
+        confidence: patternConfidence('pattern_multi_agent_task', 1),
         examples: [
           'Implement this across the stack',
           'Parallelize this work',
@@ -894,7 +903,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'System needs to improve its own capabilities',
         context: ['meta', 'self', 'improve', 'evolve', 'learn'],
-        confidence: patternConfidence('pattern_self_improvement', 1, 0.75),
+        confidence: patternConfidence('pattern_self_improvement', 1),
         examples: [
           "Improve Librarian's accuracy",
           "Evolve the agent's strategies",
@@ -969,7 +978,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'New to codebase, need to understand structure',
         context: ['new repo', 'onboarding', 'architecture', 'where to start'],
-        confidence: patternConfidence('pattern_codebase_onboarding', 1, 0.9),
+        confidence: patternConfidence('pattern_codebase_onboarding', 1),
         examples: [
           'How is this codebase organized?',
           'What are the main components?',
@@ -1042,7 +1051,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Need to assess security posture of code',
         context: ['security', 'vulnerability', 'audit', 'threat modeling'],
-        confidence: patternConfidence('pattern_security_audit', 1, 0.85),
+        confidence: patternConfidence('pattern_security_audit', 1),
         examples: [
           'Find security vulnerabilities',
           'Audit authentication code',
@@ -1115,7 +1124,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Designing or reviewing an API',
         context: ['API', 'endpoint', 'interface', 'breaking change'],
-        confidence: patternConfidence('pattern_api_design', 1, 0.85),
+        confidence: patternConfidence('pattern_api_design', 1),
         examples: [
           'Review this API design',
           'Is this endpoint well-designed?',
@@ -1188,7 +1197,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Production incident needs immediate response',
         context: ['incident', 'outage', 'production', 'urgent', 'emergency'],
-        confidence: patternConfidence('pattern_incident_response', 1, 0.95),
+        confidence: patternConfidence('pattern_incident_response', 1),
         examples: [
           'Production is down',
           'Users cannot login',
@@ -1263,7 +1272,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Need to update dependencies safely',
         context: ['dependency', 'upgrade', 'version', 'security patch'],
-        confidence: patternConfidence('pattern_dependency_update', 1, 0.85),
+        confidence: patternConfidence('pattern_dependency_update', 1),
         examples: [
           'Update to latest React',
           'Apply security patches',
@@ -1337,7 +1346,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Need to identify and prioritize technical debt',
         context: ['tech debt', 'cleanup', 'modernize', 'legacy', 'maintenance'],
-        confidence: patternConfidence('pattern_technical_debt', 1, 0.8),
+        confidence: patternConfidence('pattern_technical_debt', 1),
         examples: [
           'What tech debt should we address?',
           'Identify cleanup priorities',
@@ -1410,7 +1419,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Need to create tests for existing code',
         context: ['test', 'coverage', 'unit test', 'integration test'],
-        confidence: patternConfidence('pattern_test_generation', 1, 0.85),
+        confidence: patternConfidence('pattern_test_generation', 1),
         examples: [
           'Add tests for this function',
           'Improve test coverage',
@@ -1483,7 +1492,7 @@ export const COMPOSITION_PATTERN_CATALOG = freezeCatalog([
       {
         trigger: 'Need to create or update documentation',
         context: ['docs', 'documentation', 'README', 'API docs', 'comments'],
-        confidence: patternConfidence('pattern_documentation', 1, 0.8),
+        confidence: patternConfidence('pattern_documentation', 1),
         examples: [
           'Document this API',
           'Update the README',

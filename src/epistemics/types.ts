@@ -18,6 +18,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { ConfidenceValue } from './confidence.js';
+import { absent, isConfidenceValue } from './confidence.js';
 
 // ============================================================================
 // SCHEMA VERSION
@@ -55,8 +57,11 @@ export interface Claim {
   /** Current status of the claim */
   status: ClaimStatus;
 
-  /** Computed confidence (decomposed) */
-  confidence: DecomposedConfidence;
+  /** Epistemic claim confidence (Track D) */
+  confidence: ConfidenceValue;
+
+  /** Heuristic signal strength (non-calibrated) */
+  signalStrength: ClaimSignalStrength;
 
   /** Schema version for forward compatibility */
   schemaVersion: string;
@@ -134,34 +139,34 @@ export type ClaimStatus =
  * Decomposed confidence following the mandate's requirements.
  * Confidence is never a single number - it's always broken down by source.
  */
-export interface DecomposedConfidence {
-  /** Overall confidence (computed from components) */
+export interface ClaimSignalStrength {
+  /** Overall signal strength (computed from components) */
   overall: number;
 
-  /** Confidence in retrieval accuracy */
+  /** Signal strength in retrieval accuracy */
   retrieval: number;
 
-  /** Confidence in structural analysis */
+  /** Signal strength in structural analysis */
   structural: number;
 
-  /** Confidence in semantic understanding */
+  /** Signal strength in semantic understanding */
   semantic: number;
 
-  /** Confidence from test/execution evidence */
+  /** Signal strength from test/execution evidence */
   testExecution: number;
 
-  /** Confidence based on recency */
+  /** Signal strength based on recency */
   recency: number;
 
-  /** How overall was computed */
+  /** How overall signal strength was computed */
   aggregationMethod: 'geometric_mean' | 'weighted_average' | 'minimum' | 'product';
 
   /** Weights used for aggregation */
   weights?: Record<string, number>;
 }
 
-/** Create default confidence (unknown state) */
-export function createDefaultConfidence(): DecomposedConfidence {
+/** Create default signal strength (unknown state) */
+export function createDefaultSignalStrength(): ClaimSignalStrength {
   return {
     overall: 0.5,
     retrieval: 0.5,
@@ -173,8 +178,8 @@ export function createDefaultConfidence(): DecomposedConfidence {
   };
 }
 
-/** Compute overall confidence using geometric mean */
-export function computeOverallConfidence(conf: Omit<DecomposedConfidence, 'overall'>): number {
+/** Compute overall signal strength using geometric mean */
+export function computeOverallSignalStrength(conf: Omit<ClaimSignalStrength, 'overall'>): number {
   const values = [conf.retrieval, conf.structural, conf.semantic, conf.testExecution, conf.recency];
   const product = values.reduce((acc, v) => acc * v, 1);
   return Math.pow(product, 1 / values.length);
@@ -449,7 +454,8 @@ export function isClaim(value: unknown): value is Claim {
     typeof obj.createdAt === 'string' &&
     typeof obj.source === 'object' &&
     typeof obj.status === 'string' &&
-    typeof obj.confidence === 'object'
+    isConfidenceValue(obj.confidence) &&
+    typeof obj.signalStrength === 'object'
   );
 }
 
@@ -587,16 +593,17 @@ export function createEmptyEvidenceGraph(workspace: string): EvidenceGraph {
 
 /** Create a new claim */
 export function createClaim(
-  props: Omit<Claim, 'id' | 'createdAt' | 'schemaVersion' | 'status' | 'confidence'> & {
+  props: Omit<Claim, 'id' | 'createdAt' | 'schemaVersion' | 'status' | 'confidence' | 'signalStrength'> & {
     id?: string;
-    confidence?: Partial<DecomposedConfidence>;
+    confidence?: ConfidenceValue;
+    signalStrength?: Partial<ClaimSignalStrength>;
   }
 ): Claim {
-  const confidence = {
-    ...createDefaultConfidence(),
-    ...props.confidence,
+  const signalStrength = {
+    ...createDefaultSignalStrength(),
+    ...props.signalStrength,
   };
-  confidence.overall = computeOverallConfidence(confidence);
+  signalStrength.overall = computeOverallSignalStrength(signalStrength);
 
   return {
     id: createClaimId(props.id ?? `claim_${randomUUID()}`),
@@ -606,7 +613,8 @@ export function createClaim(
     createdAt: new Date().toISOString(),
     source: props.source,
     status: 'active',
-    confidence,
+    confidence: props.confidence ?? absent('uncalibrated'),
+    signalStrength,
     schemaVersion: EVIDENCE_GRAPH_SCHEMA_VERSION,
   };
 }

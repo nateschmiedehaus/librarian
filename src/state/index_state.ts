@@ -1,0 +1,108 @@
+import type { LibrarianStorage } from '../storage/types.js';
+import { safeJsonParseSimple } from '../utils/safe_json.js';
+
+export type IndexPhase =
+  | 'uninitialized'
+  | 'discovering'
+  | 'indexing'
+  | 'computing_graph'
+  | 'generating_knowledge'
+  | 'ready'
+  | 'incremental';
+
+export interface IndexProgress {
+  total: number;
+  completed: number;
+  currentFile?: string;
+}
+
+export interface IndexState {
+  phase: IndexPhase;
+  progress?: IndexProgress;
+  lastFullIndex?: string;
+  estimatedCompletion?: string;
+  updatedAt?: string;
+}
+
+export interface IndexStateWriter {
+  write: (state: IndexState, options?: { force?: boolean }) => Promise<void>;
+  flush: () => Promise<void>;
+}
+
+const INDEX_STATE_KEY = 'index_state';
+const DEFAULT_STATE: IndexState = { phase: 'uninitialized' };
+const DEFAULT_WRITE_THROTTLE_MS = 500;
+
+export async function getIndexState(storage: LibrarianStorage): Promise<IndexState> {
+  const raw = await storage.getState(INDEX_STATE_KEY);
+  if (!raw) return { ...DEFAULT_STATE };
+  const parsed = safeJsonParseSimple<IndexState>(raw);
+  if (!parsed || typeof parsed !== 'object' || !parsed.phase) return { ...DEFAULT_STATE };
+  return {
+    phase: parsed.phase,
+    progress: parsed.progress ? { ...parsed.progress } : undefined,
+    lastFullIndex: parsed.lastFullIndex,
+    estimatedCompletion: parsed.estimatedCompletion,
+    updatedAt: parsed.updatedAt,
+  };
+}
+
+export async function setIndexState(storage: LibrarianStorage, state: IndexState): Promise<void> {
+  const next: IndexState = {
+    ...state,
+    updatedAt: new Date().toISOString(),
+  };
+  await storage.setState(INDEX_STATE_KEY, JSON.stringify(next));
+}
+
+export function createIndexStateWriter(
+  storage: LibrarianStorage,
+  options: { throttleMs?: number } = {}
+): IndexStateWriter {
+  let lastWriteAt = 0;
+  let pending: IndexState | null = null;
+  const throttleMs = options.throttleMs ?? DEFAULT_WRITE_THROTTLE_MS;
+
+  const write = async (state: IndexState, writeOptions: { force?: boolean } = {}): Promise<void> => {
+    const now = Date.now();
+    if (!writeOptions.force && now - lastWriteAt < throttleMs) {
+      pending = state;
+      return;
+    }
+    lastWriteAt = now;
+    pending = null;
+    await setIndexState(storage, state);
+  };
+
+  const flush = async (): Promise<void> => {
+    if (!pending) return;
+    const next = pending;
+    pending = null;
+    await write(next, { force: true });
+  };
+
+  return { write, flush };
+}
+
+export function isReadyPhase(phase: IndexPhase): boolean {
+  return phase === 'ready' || phase === 'incremental';
+}
+
+export async function waitForIndexReady(
+  storage: LibrarianStorage,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {}
+): Promise<IndexState> {
+  const timeoutMs = options.timeoutMs ?? 0;
+  const pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 250);
+  const startedAt = Date.now();
+  let state = await getIndexState(storage);
+  if (isReadyPhase(state.phase)) return state;
+
+  while (timeoutMs <= 0 || Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    state = await getIndexState(storage);
+    if (isReadyPhase(state.phase)) return state;
+  }
+
+  return state;
+}

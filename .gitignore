@@ -1,6 +1,8 @@
 node_modules/
 dist/
 state/
+!src/state/
+!src/state/**
 .librarian/
 :memory
 .DS_Store

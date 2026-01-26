@@ -1,0 +1,46 @@
+/**
+ * @fileoverview Utility Module Exports
+ *
+ * @packageDocumentation
+ */
+
+export { LLMService, getLLMService, setLLMService } from './llm_service.js';
+export type { LLMServiceOptions, ProviderHealth } from './llm_service.js';
+
+export {
+  ensureDailyModelSelection,
+  getCurrentModelSelection,
+  resetModelSelection,
+  selectModel,
+} from './model_policy.js';
+export type { ModelSelection, ModelPolicy } from './model_policy.js';
+
+export {
+  safeJsonParse,
+  parseJsonWithDefault,
+  safeJsonStringify,
+  parseJsonObject,
+  parseJsonArray,
+} from './safe_json.js';
+
+export {
+  validateJSON,
+  validateJSONString,
+  extractJSON,
+  validateLLMOutput,
+  OutputValidationError,
+  StringArraySchema,
+  StringRecordSchema,
+  NumberSchema,
+  BooleanSchema,
+} from './output_validator.js';
+export type { ValidationResult } from './output_validator.js';
+
+export { AuthChecker, getAuthChecker } from './auth_checker.js';
+export type { AuthStatus, AuthStatusSummary } from './auth_checker.js';
+
+export { extractMarkedJson, createMarkedJson, wrapJsonCodeBlock } from './marked_json.js';
+export type { MarkedJsonResult } from './marked_json.js';
+
+export { HallucinationDetector, getHallucinationDetector } from './hallucination_detector.js';
+export type { HallucinationCheck, HallucinationResult } from './hallucination_detector.js';

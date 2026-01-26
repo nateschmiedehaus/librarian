@@ -1,0 +1,470 @@
+/**
+ * @fileoverview Tests for MCP Schema Validation
+ *
+ * Tests cover:
+ * - Schema validation for all tool inputs
+ * - Type guards
+ * - Error reporting
+ * - Edge cases
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+  SCHEMA_VERSION,
+  validateToolInput,
+  listToolSchemas,
+  getToolSchema,
+  parseToolInput,
+  safeParseToolInput,
+  BootstrapToolInputSchema,
+  QueryToolInputSchema,
+  VerifyClaimToolInputSchema,
+  RunAuditToolInputSchema,
+  DiffRunsToolInputSchema,
+  ExportIndexToolInputSchema,
+  GetContextPackBundleToolInputSchema,
+  type ToolName,
+} from '../schema.js';
+import {
+  MCP_SCHEMA_VERSION,
+  isBootstrapToolInput,
+  isQueryToolInput,
+  isVerifyClaimToolInput,
+  isRunAuditToolInput,
+  isDiffRunsToolInput,
+  isExportIndexToolInput,
+  isGetContextPackBundleToolInput,
+} from '../types.js';
+
+describe('MCP Schema', () => {
+  describe('Schema Version', () => {
+    it('should have a valid semantic version', () => {
+      expect(SCHEMA_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(MCP_SCHEMA_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+    });
+  });
+
+  describe('Schema Registry', () => {
+    it('should list all tool schemas', () => {
+      const schemas = listToolSchemas();
+      expect(schemas).toContain('bootstrap');
+      expect(schemas).toContain('system_contract');
+      expect(schemas).toContain('diagnose_self');
+      expect(schemas).toContain('status');
+      expect(schemas).toContain('query');
+      expect(schemas).toContain('verify_claim');
+      expect(schemas).toContain('run_audit');
+      expect(schemas).toContain('diff_runs');
+      expect(schemas).toContain('export_index');
+      expect(schemas).toContain('get_context_pack_bundle');
+      expect(schemas).toContain('list_verification_plans');
+      expect(schemas).toContain('list_episodes');
+      expect(schemas).toContain('list_technique_primitives');
+      expect(schemas).toContain('list_technique_compositions');
+      expect(schemas).toContain('select_technique_compositions');
+      expect(schemas).toContain('compile_technique_composition');
+      expect(schemas).toContain('compile_intent_bundles');
+      expect(schemas).toHaveLength(17);
+    });
+
+    it('should return schema for known tools', () => {
+      expect(getToolSchema('bootstrap')).toBeDefined();
+      expect(getToolSchema('query')).toBeDefined();
+      expect(getToolSchema('unknown')).toBeUndefined();
+    });
+  });
+
+  describe('Bootstrap Tool Schema', () => {
+    it('should validate correct input', () => {
+      const input = { workspace: '/path/to/workspace' };
+      const result = validateToolInput('bootstrap', input);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should validate input with all options', () => {
+      const input = {
+        workspace: '/path/to/workspace',
+        force: true,
+        include: ['**/*.ts', '**/*.js'],
+        exclude: ['node_modules/**'],
+        llmProvider: 'claude',
+        maxFiles: 100,
+      };
+      const result = validateToolInput('bootstrap', input);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject missing workspace', () => {
+      const result = validateToolInput('bootstrap', {});
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.path.includes('workspace'))).toBe(true);
+    });
+
+    it('should reject empty workspace', () => {
+      const result = validateToolInput('bootstrap', { workspace: '' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject invalid llmProvider', () => {
+      const result = validateToolInput('bootstrap', {
+        workspace: '/test',
+        llmProvider: 'invalid',
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject extra properties (strict mode)', () => {
+      const result = validateToolInput('bootstrap', {
+        workspace: '/test',
+        unknownField: 'value',
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should pass type guard', () => {
+      expect(isBootstrapToolInput({ workspace: '/test' })).toBe(true);
+      expect(isBootstrapToolInput({})).toBe(false);
+      expect(isBootstrapToolInput(null)).toBe(false);
+    });
+  });
+
+  describe('Query Tool Schema', () => {
+    it('should validate correct input', () => {
+      const input = { intent: 'How does authentication work?' };
+      const result = validateToolInput('query', input);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate input with all options', () => {
+      const input = {
+        intent: 'How does authentication work?',
+        intentType: 'understand',
+        affectedFiles: ['src/auth.ts'],
+        minConfidence: 0.7,
+        depth: 'L2',
+        includeEngines: true,
+        includeEvidence: true,
+      };
+      const result = validateToolInput('query', input);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject missing intent', () => {
+      const result = validateToolInput('query', {});
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject empty intent', () => {
+      const result = validateToolInput('query', { intent: '' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject intent exceeding max length', () => {
+      const result = validateToolInput('query', {
+        intent: 'a'.repeat(2001),
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject invalid intentType', () => {
+      const result = validateToolInput('query', {
+        intent: 'test',
+        intentType: 'invalid',
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject minConfidence out of range', () => {
+      expect(validateToolInput('query', { intent: 'test', minConfidence: -0.1 }).valid).toBe(false);
+      expect(validateToolInput('query', { intent: 'test', minConfidence: 1.1 }).valid).toBe(false);
+    });
+
+    it('should reject invalid depth', () => {
+      const result = validateToolInput('query', {
+        intent: 'test',
+        depth: 'L5',
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should pass type guard', () => {
+      expect(isQueryToolInput({ intent: 'test' })).toBe(true);
+      expect(isQueryToolInput({})).toBe(false);
+    });
+  });
+
+  describe('Verify Claim Tool Schema', () => {
+    it('should validate correct input', () => {
+      const result = validateToolInput('verify_claim', { claimId: 'claim_123' });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate with force option', () => {
+      const result = validateToolInput('verify_claim', {
+        claimId: 'claim_123',
+        force: true,
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject missing claimId', () => {
+      const result = validateToolInput('verify_claim', {});
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject empty claimId', () => {
+      const result = validateToolInput('verify_claim', { claimId: '' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should pass type guard', () => {
+      expect(isVerifyClaimToolInput({ claimId: 'test' })).toBe(true);
+      expect(isVerifyClaimToolInput({})).toBe(false);
+    });
+  });
+
+  describe('Run Audit Tool Schema', () => {
+    it('should validate correct input', () => {
+      const result = validateToolInput('run_audit', { type: 'full' });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate all audit types', () => {
+      const types = ['full', 'claims', 'coverage', 'security', 'freshness'];
+      for (const type of types) {
+        const result = validateToolInput('run_audit', { type });
+        expect(result.valid).toBe(true);
+      }
+    });
+
+    it('should validate with scope', () => {
+      const result = validateToolInput('run_audit', {
+        type: 'security',
+        scope: ['src/**/*.ts'],
+        generateReport: true,
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject missing type', () => {
+      const result = validateToolInput('run_audit', {});
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject invalid type', () => {
+      const result = validateToolInput('run_audit', { type: 'invalid' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should pass type guard', () => {
+      expect(isRunAuditToolInput({ type: 'full' })).toBe(true);
+      expect(isRunAuditToolInput({})).toBe(false);
+    });
+  });
+
+  describe('Diff Runs Tool Schema', () => {
+    it('should validate correct input', () => {
+      const result = validateToolInput('diff_runs', {
+        runIdA: 'run_1',
+        runIdB: 'run_2',
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate with detailed option', () => {
+      const result = validateToolInput('diff_runs', {
+        runIdA: 'run_1',
+        runIdB: 'run_2',
+        detailed: true,
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject missing runIdA', () => {
+      const result = validateToolInput('diff_runs', { runIdB: 'run_2' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject missing runIdB', () => {
+      const result = validateToolInput('diff_runs', { runIdA: 'run_1' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject empty run IDs', () => {
+      expect(validateToolInput('diff_runs', { runIdA: '', runIdB: 'run_2' }).valid).toBe(false);
+      expect(validateToolInput('diff_runs', { runIdA: 'run_1', runIdB: '' }).valid).toBe(false);
+    });
+
+    it('should pass type guard', () => {
+      expect(isDiffRunsToolInput({ runIdA: 'a', runIdB: 'b' })).toBe(true);
+      expect(isDiffRunsToolInput({ runIdA: 'a' })).toBe(false);
+    });
+  });
+
+  describe('Export Index Tool Schema', () => {
+    it('should validate correct input', () => {
+      const result = validateToolInput('export_index', {
+        format: 'json',
+        outputPath: '/output/index.json',
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate all formats', () => {
+      const formats = ['json', 'sqlite', 'scip', 'lsif'];
+      for (const format of formats) {
+        const result = validateToolInput('export_index', {
+          format,
+          outputPath: '/output/index',
+        });
+        expect(result.valid).toBe(true);
+      }
+    });
+
+    it('should validate with all options', () => {
+      const result = validateToolInput('export_index', {
+        format: 'sqlite',
+        outputPath: '/output/index.db',
+        includeEmbeddings: true,
+        scope: ['src/**/*.ts'],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject missing format', () => {
+      const result = validateToolInput('export_index', { outputPath: '/test' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject missing outputPath', () => {
+      const result = validateToolInput('export_index', { format: 'json' });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject invalid format', () => {
+      const result = validateToolInput('export_index', {
+        format: 'invalid',
+        outputPath: '/test',
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should pass type guard', () => {
+      expect(isExportIndexToolInput({ format: 'json', outputPath: '/test' })).toBe(true);
+      expect(isExportIndexToolInput({ format: 'json' })).toBe(false);
+    });
+  });
+
+  describe('Get Context Pack Bundle Tool Schema', () => {
+    it('should validate correct input', () => {
+      const result = validateToolInput('get_context_pack_bundle', {
+        entityIds: ['entity_1', 'entity_2'],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate with all options', () => {
+      const result = validateToolInput('get_context_pack_bundle', {
+        entityIds: ['entity_1'],
+        bundleType: 'comprehensive',
+        maxTokens: 50000,
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate all bundle types', () => {
+      const types = ['minimal', 'standard', 'comprehensive'];
+      for (const bundleType of types) {
+        const result = validateToolInput('get_context_pack_bundle', {
+          entityIds: ['entity_1'],
+          bundleType,
+        });
+        expect(result.valid).toBe(true);
+      }
+    });
+
+    it('should reject missing entityIds', () => {
+      const result = validateToolInput('get_context_pack_bundle', {});
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject empty entityIds array', () => {
+      const result = validateToolInput('get_context_pack_bundle', {
+        entityIds: [],
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('should reject maxTokens out of range', () => {
+      expect(validateToolInput('get_context_pack_bundle', {
+        entityIds: ['e1'],
+        maxTokens: 50,
+      }).valid).toBe(false);
+      expect(validateToolInput('get_context_pack_bundle', {
+        entityIds: ['e1'],
+        maxTokens: 200000,
+      }).valid).toBe(false);
+    });
+
+    it('should pass type guard', () => {
+      expect(isGetContextPackBundleToolInput({ entityIds: ['e1'] })).toBe(true);
+      expect(isGetContextPackBundleToolInput({ entityIds: [] })).toBe(true); // Array.isArray passes
+      expect(isGetContextPackBundleToolInput({})).toBe(false);
+    });
+  });
+
+  describe('Unknown Tool', () => {
+    it('should reject unknown tool names', () => {
+      const result = validateToolInput('unknown_tool', { any: 'data' });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe('unknown_tool');
+    });
+  });
+
+  describe('Parse Functions', () => {
+    it('parseToolInput should return typed data', () => {
+      const data = parseToolInput('bootstrap', { workspace: '/test' });
+      expect(data.workspace).toBe('/test');
+      expect(data.force).toBe(false); // default
+    });
+
+    it('parseToolInput should throw on invalid input', () => {
+      expect(() => parseToolInput('bootstrap', {})).toThrow();
+    });
+
+    it('safeParseToolInput should return success result', () => {
+      const result = safeParseToolInput('bootstrap', { workspace: '/test' });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.workspace).toBe('/test');
+      }
+    });
+
+    it('safeParseToolInput should return error result', () => {
+      const result = safeParseToolInput('bootstrap', {});
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('Validation Error Reporting', () => {
+    it('should report multiple errors', () => {
+      const result = validateToolInput('diff_runs', {});
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+
+    it('should include path in errors', () => {
+      const result = validateToolInput('query', { intent: '' });
+      expect(result.valid).toBe(false);
+      const error = result.errors.find(e => e.path.includes('intent'));
+      expect(error).toBeDefined();
+    });
+
+    it('should include error code', () => {
+      const result = validateToolInput('bootstrap', {});
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBeDefined();
+    });
+  });
+});

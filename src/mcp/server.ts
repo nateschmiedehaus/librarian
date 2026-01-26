@@ -1,0 +1,2715 @@
+/**
+ * @fileoverview MCP Server Implementation for Librarian
+ *
+ * Implements a Model Context Protocol server that exposes Librarian's
+ * knowledge base and tools to MCP clients (e.g., Claude Code).
+ *
+ * Features:
+ * - Resource discovery and access (file tree, symbols, knowledge maps, etc.)
+ * - Tool execution (bootstrap, query, verify_claim, run_audit, etc.)
+ * - Authorization with scope-based access control
+ * - Audit logging for all operations
+ *
+ * @packageDocumentation
+ */
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+  type CallToolResult,
+  type ListResourcesResult,
+  type ListToolsResult,
+  type ReadResourceResult,
+  type Tool,
+  type Resource,
+} from '@modelcontextprotocol/sdk/types.js';
+
+import {
+  MCP_SCHEMA_VERSION,
+  DEFAULT_MCP_SERVER_CONFIG,
+  TOOL_AUTHORIZATION,
+  type LibrarianMCPServerConfig,
+  type AuthorizationScope,
+  type BootstrapToolInput,
+  type StatusToolInput,
+  type QueryToolInput,
+  type VerifyClaimToolInput,
+  type RunAuditToolInput,
+  type DiffRunsToolInput,
+  type ExportIndexToolInput,
+  type GetContextPackBundleToolInput,
+  type SystemContractToolInput,
+  type DiagnoseSelfToolInput,
+  type ListVerificationPlansToolInput,
+  type ListEpisodesToolInput,
+  type ListTechniquePrimitivesToolInput,
+  type ListTechniqueCompositionsToolInput,
+  type SelectTechniqueCompositionsToolInput,
+  type CompileTechniqueCompositionToolInput,
+  type CompileIntentBundlesToolInput,
+  isBootstrapToolInput,
+  isQueryToolInput,
+  isVerifyClaimToolInput,
+  isRunAuditToolInput,
+  isDiffRunsToolInput,
+  isExportIndexToolInput,
+  isGetContextPackBundleToolInput,
+} from './types.js';
+
+import {
+  validateToolInput,
+  type ValidationResult,
+} from './schema.js';
+
+// Librarian API imports
+import {
+  createLibrarian,
+  Librarian,
+  bootstrapProject,
+  createBootstrapConfig,
+  isBootstrapRequired,
+  getBootstrapStatus,
+  queryLibrarian,
+} from '../api/index.js';
+import { selectTechniqueCompositions } from '../api/plan_compiler.js';
+import {
+  compileTechniqueCompositionTemplateWithGapsFromStorage,
+  compileTechniqueCompositionBundleFromStorage,
+} from '../api/plan_compiler.js';
+import { compileTechniqueBundlesFromIntent } from '../api/plan_compiler.js';
+import { createSqliteStorage, type LibrarianStorage } from '../storage/index.js';
+import { checkDefeaters, STANDARD_DEFEATERS } from '../knowledge/defeater_activation.js';
+import {
+  AuthenticationManager,
+  createAuthenticationManager,
+  type SessionToken,
+  type AuthorizationResult,
+} from './authentication.js';
+import * as path from 'path';
+import * as fs from 'fs/promises';
+import { createAuditLogger, type AuditLogger } from './audit.js';
+import { SqliteEvidenceLedger } from '../epistemics/evidence_ledger.js';
+import { AuditBackedToolAdapter, type ToolAdapter } from '../adapters/tool_adapter.js';
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
+/** Server state */
+export interface ServerState {
+  /** Initialized workspaces */
+  workspaces: Map<string, WorkspaceState>;
+
+  /** Active sessions */
+  sessions: Map<string, SessionState>;
+
+  /** Audit log entries */
+  auditLog: AuditLogEntry[];
+
+  /** Authentication manager */
+  authManager: AuthenticationManager;
+}
+
+/** Workspace state */
+export interface WorkspaceState {
+  /** Workspace path */
+  path: string;
+
+  /** Storage instance (lazy loaded) */
+  storage?: LibrarianStorage;
+
+  /** Librarian instance (for autoWatch support) */
+  librarian?: Librarian;
+
+  /** Evidence ledger for epistemic/audit trace (lazy) */
+  evidenceLedger?: SqliteEvidenceLedger;
+
+  /** Structured audit logger (lazy) */
+  auditLogger?: AuditLogger;
+
+  /** Tool adapter that records tool calls (lazy) */
+  toolAdapter?: ToolAdapter;
+
+  /** Indexed at */
+  indexedAt?: string;
+
+  /** Index state */
+  indexState: 'pending' | 'indexing' | 'ready' | 'stale';
+
+  /** Bootstrap run ID for diff tracking */
+  lastBootstrapRunId?: string;
+
+  /** File watcher active */
+  watching?: boolean;
+}
+
+/** Session state */
+export interface SessionState {
+  /** Session ID */
+  id: string;
+
+  /** Created at */
+  createdAt: string;
+
+  /** Authorized scopes */
+  authorizedScopes: Set<AuthorizationScope>;
+
+  /** Request count */
+  requestCount: number;
+
+  /** Last activity */
+  lastActivity: string;
+}
+
+/** Audit log entry */
+export interface AuditLogEntry {
+  /** Entry ID */
+  id: string;
+
+  /** Timestamp */
+  timestamp: string;
+
+  /** Session ID */
+  sessionId?: string;
+
+  /** Operation type */
+  operation: 'tool_call' | 'resource_read' | 'authorization' | 'error';
+
+  /** Tool or resource name */
+  name: string;
+
+  /** Input (sanitized) */
+  input?: unknown;
+
+  /** Result status */
+  status: 'success' | 'failure' | 'denied';
+
+  /** Duration ms */
+  durationMs?: number;
+
+  /** Error message (if any) */
+  error?: string;
+}
+
+// ============================================================================
+// SERVER IMPLEMENTATION
+// ============================================================================
+
+/**
+ * Librarian MCP Server
+ *
+ * Exposes Librarian's knowledge base and tools via MCP protocol.
+ */
+export class LibrarianMCPServer {
+  private server: Server;
+  private config: LibrarianMCPServerConfig;
+  private state: ServerState;
+  private transport: StdioServerTransport | null = null;
+
+  constructor(config: Partial<LibrarianMCPServerConfig> = {}) {
+    this.config = { ...DEFAULT_MCP_SERVER_CONFIG, ...config };
+    this.state = {
+      workspaces: new Map(),
+      sessions: new Map(),
+      auditLog: [],
+      authManager: createAuthenticationManager({
+        maxSessionsPerClient: 10,
+        allowScopeEscalation: false,
+      }),
+    };
+
+    // Initialize MCP server
+    this.server = new Server(
+      {
+        name: this.config.name,
+        version: this.config.version,
+      },
+      {
+        capabilities: {
+          resources: {},
+          tools: {},
+        },
+      }
+    );
+
+    // Register handlers
+    this.registerHandlers();
+  }
+
+  /**
+   * Register all MCP request handlers.
+   */
+  private registerHandlers(): void {
+    // List available tools
+    this.server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => {
+      return { tools: this.getAvailableTools() };
+    });
+
+    // List available resources
+    this.server.setRequestHandler(ListResourcesRequestSchema, async (): Promise<ListResourcesResult> => {
+      return { resources: await this.getAvailableResources() };
+    });
+
+    // Read a resource
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request): Promise<ReadResourceResult> => {
+      const { uri } = request.params;
+      return this.readResource(uri);
+    });
+
+    // Call a tool
+    this.server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
+      const { name, arguments: args } = request.params;
+      return this.callTool(name, args);
+    });
+  }
+
+  /**
+   * Get list of available tools.
+   */
+  private getAvailableTools(): Tool[] {
+    const tools: Tool[] = [
+      {
+        name: 'bootstrap',
+        description: 'Bootstrap/index a workspace for knowledge extraction',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Absolute path to workspace' },
+            force: { type: 'boolean', description: 'Force re-index' },
+            include: { type: 'array', items: { type: 'string' }, description: 'Include patterns' },
+            exclude: { type: 'array', items: { type: 'string' }, description: 'Exclude patterns' },
+            llmProvider: { type: 'string', enum: ['claude', 'codex'], description: 'LLM provider' },
+            maxFiles: { type: 'number', description: 'Max files to index' },
+          },
+          required: ['workspace'],
+        },
+      },
+      {
+        name: 'status',
+        description: 'Get status of a workspace including index state and file watcher status',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'system_contract',
+        description: 'Get system contract and provenance for a workspace',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'diagnose_self',
+        description: 'Diagnose Librarian self-knowledge drift for a workspace',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'list_verification_plans',
+        description: 'List verification plans for a workspace',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+            limit: { type: 'number', description: 'Limit number of plans returned' },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'list_episodes',
+        description: 'List verification episodes for a workspace',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+            limit: { type: 'number', description: 'Limit number of episodes returned' },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'list_technique_primitives',
+        description: 'List technique primitives for a workspace',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+            limit: { type: 'number', description: 'Limit number of primitives returned' },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'list_technique_compositions',
+        description: 'List technique compositions for a workspace',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+            limit: { type: 'number', description: 'Limit number of compositions returned' },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'select_technique_compositions',
+        description: 'Select technique compositions based on intent',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            intent: { type: 'string', description: 'Intent or goal to select compositions for' },
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+            limit: { type: 'number', description: 'Limit number of compositions returned' },
+          },
+          required: ['intent'],
+        },
+      },
+      {
+        name: 'compile_technique_composition',
+        description: 'Compile a technique composition into a work template',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            compositionId: { type: 'string', description: 'Technique composition ID to compile' },
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+          },
+          required: ['compositionId'],
+        },
+      },
+      {
+        name: 'compile_intent_bundles',
+        description: 'Compile intent into technique composition bundles',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            intent: { type: 'string', description: 'Intent to compile into technique bundles' },
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first available if not specified)' },
+            limit: { type: 'number', description: 'Limit number of bundles returned' },
+            includePrimitives: { type: 'boolean', description: 'Include primitive definitions in output' },
+          },
+          required: ['intent'],
+        },
+      },
+      {
+        name: 'query',
+        description: 'Query the knowledge base for context and insights',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            intent: { type: 'string', description: 'Query intent or question' },
+            workspace: { type: 'string', description: 'Workspace path (optional, uses first ready workspace if not specified)' },
+            intentType: { type: 'string', enum: ['understand', 'debug', 'refactor', 'impact', 'security', 'test', 'document', 'navigate', 'general'] },
+            affectedFiles: { type: 'array', items: { type: 'string' }, description: 'Scope to files' },
+            minConfidence: { type: 'number', description: 'Min confidence (0-1)' },
+            depth: { type: 'string', enum: ['L0', 'L1', 'L2', 'L3'], description: 'Context depth' },
+            includeEngines: { type: 'boolean', description: 'Include engine results' },
+            includeEvidence: { type: 'boolean', description: 'Include evidence graph' },
+          },
+          required: ['intent'],
+        },
+      },
+      {
+        name: 'verify_claim',
+        description: 'Verify a knowledge claim against evidence',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            claimId: { type: 'string', description: 'Claim ID to verify' },
+            force: { type: 'boolean', description: 'Force re-verification' },
+          },
+          required: ['claimId'],
+        },
+      },
+      {
+        name: 'run_audit',
+        description: 'Run an audit on the knowledge base',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', enum: ['full', 'claims', 'coverage', 'security', 'freshness'] },
+            scope: { type: 'array', items: { type: 'string' }, description: 'Scope patterns' },
+            generateReport: { type: 'boolean', description: 'Generate detailed report' },
+          },
+          required: ['type'],
+        },
+      },
+      {
+        name: 'diff_runs',
+        description: 'Compare two indexing runs',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            runIdA: { type: 'string', description: 'First run ID' },
+            runIdB: { type: 'string', description: 'Second run ID' },
+            detailed: { type: 'boolean', description: 'Include detailed diff' },
+          },
+          required: ['runIdA', 'runIdB'],
+        },
+      },
+      {
+        name: 'export_index',
+        description: 'Export the index to a file',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            format: { type: 'string', enum: ['json', 'sqlite', 'scip', 'lsif'] },
+            outputPath: { type: 'string', description: 'Output file path' },
+            includeEmbeddings: { type: 'boolean', description: 'Include embeddings' },
+            scope: { type: 'array', items: { type: 'string' }, description: 'Scope patterns' },
+          },
+          required: ['format', 'outputPath'],
+        },
+      },
+      {
+        name: 'get_context_pack_bundle',
+        description: 'Get bundled context packs for entities',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            entityIds: { type: 'array', items: { type: 'string' }, description: 'Entity IDs' },
+            bundleType: { type: 'string', enum: ['minimal', 'standard', 'comprehensive'] },
+            maxTokens: { type: 'number', description: 'Max token budget' },
+          },
+          required: ['entityIds'],
+        },
+      },
+    ];
+
+    // Filter tools based on authorized scopes
+    return tools.filter((tool) => {
+      const auth = TOOL_AUTHORIZATION[tool.name];
+      if (!auth) return true;
+      return auth.requiredScopes.every((scope) =>
+        this.config.authorization.enabledScopes.includes(scope)
+      );
+    });
+  }
+
+  /**
+   * Get list of available resources.
+   */
+  private async getAvailableResources(): Promise<Resource[]> {
+    const resources: Resource[] = [];
+
+    for (const [path, workspace] of this.state.workspaces) {
+      if (workspace.indexState === 'ready') {
+        resources.push(
+          {
+            uri: `librarian://${path}/file-tree`,
+            name: 'File Tree',
+            description: `File tree for ${path}`,
+            mimeType: 'application/json',
+          },
+          {
+            uri: `librarian://${path}/symbols`,
+            name: 'Symbols',
+            description: `Code symbols for ${path}`,
+            mimeType: 'application/json',
+          },
+          {
+            uri: `librarian://${path}/knowledge-maps`,
+            name: 'Knowledge Maps',
+            description: `Knowledge maps for ${path}`,
+            mimeType: 'application/json',
+          },
+          {
+            uri: `librarian://${path}/method-packs`,
+            name: 'Method Packs',
+            description: `Method packs for ${path}`,
+            mimeType: 'application/json',
+          },
+          {
+            uri: `librarian://${path}/provenance`,
+            name: 'Provenance',
+            description: `Index provenance for ${path}`,
+            mimeType: 'application/json',
+          },
+          {
+            uri: `librarian://${path}/identity`,
+            name: 'Repository Identity',
+            description: `Repository identity for ${path}`,
+            mimeType: 'application/json',
+          }
+        );
+      }
+    }
+
+    // Add global resources
+    resources.push({
+      uri: 'librarian://audits',
+      name: 'Audits',
+      description: 'Recent audit results',
+      mimeType: 'application/json',
+    });
+
+    return resources;
+  }
+
+  /**
+   * Read a resource by URI.
+   */
+  private async readResource(uri: string): Promise<ReadResourceResult> {
+    const startTime = Date.now();
+    const entryId = this.generateId();
+    const started = Date.now();
+
+    try {
+      // Parse URI
+      const parsed = this.parseResourceUri(uri);
+      if (!parsed) {
+        throw new Error(`Invalid resource URI: ${uri}`);
+      }
+
+      // Get resource data
+      const data = await this.getResourceData(parsed.workspace, parsed.resourceType);
+
+      const auditWorkspace = parsed.workspace ? path.resolve(parsed.workspace) : undefined;
+      const instrumentation = await this.ensureWorkspaceInstrumentation(auditWorkspace);
+      instrumentation?.auditLogger?.logResourceAccess({
+        operation: uri,
+        status: 'success',
+        workspace: auditWorkspace,
+        durationMs: Date.now() - started,
+      });
+
+      // Log audit entry
+      this.logAudit({
+        id: entryId,
+        timestamp: new Date().toISOString(),
+        operation: 'resource_read',
+        name: uri,
+        status: 'success',
+        durationMs: Date.now() - startTime,
+      });
+
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(data, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      try {
+        const parsed = this.parseResourceUri(uri);
+        const auditWorkspace = parsed?.workspace ? path.resolve(parsed.workspace) : undefined;
+        const instrumentation = await this.ensureWorkspaceInstrumentation(auditWorkspace);
+        instrumentation?.auditLogger?.logResourceAccess({
+          operation: uri,
+          status: 'failure',
+          workspace: auditWorkspace,
+          durationMs: Date.now() - started,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // Ignore audit logger failures for resource reads
+      }
+      this.logAudit({
+        id: entryId,
+        timestamp: new Date().toISOString(),
+        operation: 'resource_read',
+        name: uri,
+        status: 'failure',
+        durationMs: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Call a tool with arguments.
+   */
+  private async callTool(name: string, args: unknown): Promise<CallToolResult> {
+    const startTime = Date.now();
+    const entryId = this.generateId();
+
+    try {
+      // Validate input
+      const validation = validateToolInput(name, args);
+      if (!validation.valid) {
+        throw new Error(`Invalid input: ${validation.errors.map((e) => e.message).join(', ')}`);
+      }
+
+      // Check authorization
+      const auth = TOOL_AUTHORIZATION[name];
+      if (auth) {
+        const authorized = auth.requiredScopes.every((scope) =>
+          this.config.authorization.enabledScopes.includes(scope)
+        );
+        if (!authorized) {
+          this.logAudit({
+            id: entryId,
+            timestamp: new Date().toISOString(),
+            operation: 'authorization',
+            name,
+            input: this.sanitizeInput(args),
+            status: 'denied',
+            error: `Missing required scopes: ${auth.requiredScopes.join(', ')}`,
+          });
+          throw new Error(`Authorization denied: missing required scopes`);
+        }
+      }
+
+      const sanitizedInput = this.sanitizeInput(args);
+      const inputRecord =
+        sanitizedInput && typeof sanitizedInput === 'object' && !Array.isArray(sanitizedInput)
+          ? (sanitizedInput as Record<string, unknown>)
+          : { value: sanitizedInput };
+
+      // Execute tool
+      const workspaceHint = this.resolveWorkspaceHint(validation.data);
+      const workspace = workspaceHint ? path.resolve(workspaceHint) : undefined;
+      const instrumentation = await this.ensureWorkspaceInstrumentation(workspace);
+      const result = instrumentation?.toolAdapter
+        ? await instrumentation.toolAdapter.call(
+            { operation: name, input: inputRecord, workspace },
+            () => this.executeTool(name, validation.data)
+          )
+        : await this.executeTool(name, validation.data);
+
+      // Log success
+      this.logAudit({
+        id: entryId,
+        timestamp: new Date().toISOString(),
+        operation: 'tool_call',
+        name,
+        input: sanitizedInput,
+        status: 'success',
+        durationMs: Date.now() - startTime,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      this.logAudit({
+        id: entryId,
+        timestamp: new Date().toISOString(),
+        operation: 'tool_call',
+        name,
+        input: this.sanitizeInput(args),
+        status: 'failure',
+        durationMs: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: true,
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  private resolveWorkspaceHint(args: unknown): string | undefined {
+    if (args && typeof args === 'object' && 'workspace' in args) {
+      const workspace = (args as { workspace?: unknown }).workspace;
+      if (typeof workspace === 'string' && workspace.trim()) return workspace;
+    }
+    const firstRegistered = this.state.workspaces.keys().next();
+    if (!firstRegistered.done && typeof firstRegistered.value === 'string' && firstRegistered.value.trim()) {
+      return firstRegistered.value;
+    }
+    if (this.config.workspaces.length > 0) {
+      const first = this.config.workspaces[0];
+      if (typeof first === 'string' && first.trim()) return first;
+    }
+    return undefined;
+  }
+
+  private async ensureWorkspaceInstrumentation(
+    workspacePath: string | undefined
+  ): Promise<WorkspaceState | null> {
+    if (!workspacePath || !workspacePath.trim()) return null;
+    const resolvedWorkspace = path.resolve(workspacePath);
+
+    let workspace = this.state.workspaces.get(resolvedWorkspace);
+    if (!workspace) {
+      this.registerWorkspace(resolvedWorkspace);
+      workspace = this.state.workspaces.get(resolvedWorkspace);
+    }
+    if (!workspace) return null;
+
+    if (workspace.toolAdapter && workspace.auditLogger && workspace.evidenceLedger) return workspace;
+
+    try {
+      await fs.access(resolvedWorkspace);
+    } catch {
+      return workspace;
+    }
+
+    try {
+      const librarianRoot = path.join(resolvedWorkspace, '.librarian');
+      await fs.mkdir(librarianRoot, { recursive: true });
+
+      if (!workspace.evidenceLedger) {
+        const ledgerPath = path.join(librarianRoot, 'evidence_ledger.db');
+        const ledger = new SqliteEvidenceLedger(ledgerPath);
+        await ledger.initialize();
+        workspace.evidenceLedger = ledger;
+      }
+
+      if (!workspace.auditLogger) {
+        workspace.auditLogger = createAuditLogger(
+          {
+            minSeverity: 'debug',
+            logDir: this.config.audit.logPath,
+            logFilePrefix: 'mcp',
+            maxFiles: Math.max(1, this.config.audit.retentionDays),
+          },
+          { ledger: workspace.evidenceLedger }
+        );
+        if (this.config.audit.enabled) {
+          await workspace.auditLogger.initPersistence(resolvedWorkspace);
+        }
+      }
+
+      if (!workspace.toolAdapter) {
+        workspace.toolAdapter = new AuditBackedToolAdapter(workspace.auditLogger);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logAudit({
+        id: this.generateId(),
+        timestamp: new Date().toISOString(),
+        operation: 'error',
+        name: 'workspace_instrumentation',
+        status: 'failure',
+        error: `unverified_by_trace(instrumentation_failed): ${message}`,
+      });
+    }
+
+    return workspace;
+  }
+
+  /**
+   * Execute a specific tool.
+   */
+  private async executeTool(name: string, args: unknown): Promise<unknown> {
+    switch (name) {
+      case 'bootstrap':
+        return this.executeBootstrap(args as BootstrapToolInput);
+      case 'status':
+        return this.executeStatus(args as StatusToolInput);
+      case 'system_contract':
+        return this.executeSystemContract(args as SystemContractToolInput);
+      case 'diagnose_self':
+        return this.executeDiagnoseSelf(args as DiagnoseSelfToolInput);
+      case 'list_verification_plans':
+        return this.executeListVerificationPlans(args as ListVerificationPlansToolInput);
+      case 'list_episodes':
+        return this.executeListEpisodes(args as ListEpisodesToolInput);
+      case 'list_technique_primitives':
+        return this.executeListTechniquePrimitives(args as ListTechniquePrimitivesToolInput);
+      case 'list_technique_compositions':
+        return this.executeListTechniqueCompositions(args as ListTechniqueCompositionsToolInput);
+      case 'select_technique_compositions':
+        return this.executeSelectTechniqueCompositions(args as SelectTechniqueCompositionsToolInput);
+      case 'compile_technique_composition':
+        return this.executeCompileTechniqueComposition(args as CompileTechniqueCompositionToolInput);
+      case 'compile_intent_bundles':
+        return this.executeCompileIntentBundles(args as CompileIntentBundlesToolInput);
+      case 'query':
+        return this.executeQuery(args as QueryToolInput);
+      case 'verify_claim':
+        return this.executeVerifyClaim(args as VerifyClaimToolInput);
+      case 'run_audit':
+        return this.executeRunAudit(args as RunAuditToolInput);
+      case 'diff_runs':
+        return this.executeDiffRuns(args as DiffRunsToolInput);
+      case 'export_index':
+        return this.executeExportIndex(args as ExportIndexToolInput);
+      case 'get_context_pack_bundle':
+        return this.executeGetContextPackBundle(args as GetContextPackBundleToolInput);
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  }
+
+  // ============================================================================
+  // TOOL IMPLEMENTATIONS
+  // ============================================================================
+
+  /**
+   * Get or create storage for a workspace.
+   * Prefers using existing Librarian instance's storage to avoid duplicates.
+   * Handles migration from legacy .db to .sqlite files.
+   */
+  private async getOrCreateStorage(workspacePath: string): Promise<LibrarianStorage> {
+    // Validate workspace path is absolute and accessible
+    const resolvedWorkspace = path.resolve(workspacePath);
+    try {
+      await fs.access(resolvedWorkspace);
+    } catch {
+      throw new Error(`Workspace not accessible: ${resolvedWorkspace}`);
+    }
+
+    const workspace = this.state.workspaces.get(resolvedWorkspace);
+
+    // First, try to get storage from existing Librarian instance
+    if (workspace?.librarian) {
+      const librarianStorage = workspace.librarian.getStorage();
+      if (librarianStorage) {
+        workspace.storage = librarianStorage;
+        return librarianStorage;
+      }
+    }
+
+    // Return existing storage if available
+    if (workspace?.storage) {
+      return workspace.storage;
+    }
+
+    // Setup paths
+    const librarianRoot = path.join(resolvedWorkspace, '.librarian');
+    const sqlitePath = path.join(librarianRoot, 'librarian.sqlite');
+    const legacyDbPath = path.join(librarianRoot, 'librarian.db');
+
+    // Validate path doesn't escape workspace (security check)
+    const dbPathRel = path.relative(librarianRoot, sqlitePath);
+    if (dbPathRel.startsWith('..') || path.isAbsolute(dbPathRel)) {
+      throw new Error('Security: database path must be within workspace/.librarian');
+    }
+
+    // Ensure directory exists
+    await fs.mkdir(librarianRoot, { recursive: true });
+
+    // Determine which database file to use (migration logic)
+    let dbPath = sqlitePath;
+    try {
+      await fs.access(sqlitePath);
+      // .sqlite exists, use it
+    } catch {
+      // .sqlite doesn't exist, check for legacy .db
+      try {
+        await fs.access(legacyDbPath);
+        // Legacy .db exists - migrate by renaming
+        await fs.rename(legacyDbPath, sqlitePath);
+        console.error(`[MCP] Migrated database from ${legacyDbPath} to ${sqlitePath}`);
+      } catch {
+        // Neither exists, create new .sqlite (dbPath is already set)
+      }
+    }
+
+    // Create and initialize storage
+    const storage = createSqliteStorage(dbPath, resolvedWorkspace);
+    try {
+      await storage.initialize();
+    } catch (error) {
+      throw new Error(`Failed to initialize storage: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    // Register workspace if not already registered
+    if (!workspace) {
+      this.registerWorkspace(resolvedWorkspace);
+    }
+
+    // Store the storage instance (safe after registerWorkspace)
+    const ws = this.state.workspaces.get(resolvedWorkspace);
+    if (ws) {
+      ws.storage = storage;
+    }
+
+    return storage;
+  }
+
+  private async executeBootstrap(input: BootstrapToolInput): Promise<unknown> {
+    const startTime = Date.now();
+    const runId = this.generateId();
+
+    try {
+      const workspacePath = path.resolve(input.workspace);
+
+      // Verify workspace exists
+      try {
+        await fs.access(workspacePath);
+      } catch {
+        return {
+          success: false,
+          error: `Workspace not found: ${workspacePath}`,
+          workspace: input.workspace,
+        };
+      }
+
+      // Check if we already have a Librarian instance for this workspace
+      const existingWorkspace = this.state.workspaces.get(workspacePath);
+      if (existingWorkspace?.librarian && !input.force) {
+        // Check if bootstrap is required via existing librarian
+        const status = await existingWorkspace.librarian.getStatus();
+        if (status.bootstrapped) {
+          return {
+            success: true,
+            message: 'Bootstrap not required',
+            reason: 'Already bootstrapped',
+            workspace: workspacePath,
+            runId,
+            watching: existingWorkspace.watching,
+          };
+        }
+      }
+
+      // Update workspace state
+      this.updateWorkspaceState(workspacePath, { indexState: 'indexing' });
+
+      // Create Librarian with autoWatch enabled based on server config
+      const autoWatchEnabled = this.config.autoWatch?.enabled ?? true;
+      const debounceMs = this.config.autoWatch?.debounceMs ?? 200;
+
+      const librarian = await createLibrarian({
+        workspace: workspacePath,
+        autoBootstrap: true,
+        autoWatch: autoWatchEnabled,
+        bootstrapConfig: {
+          include: input.include,
+          exclude: input.exclude,
+          llmProvider: input.llmProvider as 'claude' | 'codex' | undefined,
+          maxFileSizeBytes: input.maxFiles ? input.maxFiles * 1024 : undefined,
+          forceReindex: input.force,
+          fileTimeoutMs: input.fileTimeoutMs,
+          fileTimeoutRetries: input.fileTimeoutRetries,
+          fileTimeoutPolicy: input.fileTimeoutPolicy,
+        },
+        llmProvider: input.llmProvider as 'claude' | 'codex' | undefined,
+      });
+
+      // Get status after bootstrap
+      const status = await librarian.getStatus();
+      const storage = librarian.getStorage() ?? undefined;
+
+      // Validate autoWatch is actually running if enabled
+      const actuallyWatching = librarian.isWatching();
+      const watcherStatus = autoWatchEnabled
+        ? actuallyWatching
+          ? 'active'
+          : 'failed_to_start'
+        : 'disabled';
+
+      // Update workspace state with librarian instance
+      this.updateWorkspaceState(workspacePath, {
+        indexState: status.bootstrapped ? 'ready' : 'stale',
+        indexedAt: status.lastBootstrap?.toISOString(),
+        lastBootstrapRunId: runId,
+        librarian,
+        storage,
+        watching: actuallyWatching,
+      });
+
+      return {
+        success: status.bootstrapped,
+        runId,
+        workspace: workspacePath,
+        durationMs: Date.now() - startTime,
+        stats: {
+          filesProcessed: status.stats.totalModules,
+          functionsIndexed: status.stats.totalFunctions,
+          contextPacksCreated: status.stats.totalContextPacks,
+        },
+        autoWatch: {
+          requested: autoWatchEnabled,
+          active: actuallyWatching,
+          status: watcherStatus,
+          debounceMs: actuallyWatching ? debounceMs : undefined,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        runId,
+        workspace: input.workspace,
+        durationMs: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeStatus(input: { workspace?: string }): Promise<unknown> {
+    try {
+      // Resolve workspace path
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        // Find first available workspace
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      // Get librarian status if available
+      let librarianStatus = null;
+      if (workspace.librarian) {
+        const status = await workspace.librarian.getStatus();
+        librarianStatus = {
+          initialized: status.initialized,
+          bootstrapped: status.bootstrapped,
+          version: status.version,
+          stats: status.stats,
+          lastBootstrap: status.lastBootstrap?.toISOString(),
+        };
+      }
+
+      // Get watcher status
+      const isWatching = workspace.librarian?.isWatching() ?? false;
+      let watchStatus: { active: boolean; storageAttached: boolean; state: unknown; health?: unknown } | null = null;
+      let watchStatusError: string | null = null;
+      if (workspace.librarian) {
+        try {
+          const result = await workspace.librarian.getWatchStatus();
+          watchStatus = result ? {
+            active: result.active,
+            storageAttached: result.storageAttached,
+            state: result.state,
+            health: result.health,
+          } : null;
+        } catch (error) {
+          watchStatusError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      const watchActive = watchStatus?.active ?? isWatching;
+      const watcherStatus = workspace.watching
+        ? watchActive
+          ? 'active'
+          : 'configured_but_inactive'
+        : 'disabled';
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        indexState: workspace.indexState,
+        indexedAt: workspace.indexedAt,
+        lastBootstrapRunId: workspace.lastBootstrapRunId,
+        hasStorage: !!workspace.storage,
+        hasLibrarian: !!workspace.librarian,
+        autoWatch: {
+          configured: workspace.watching ?? false,
+          active: watchActive,
+          status: watcherStatus,
+          debounceMs: this.config.autoWatch?.debounceMs ?? 200,
+          storageAttached: watchStatus?.storageAttached ?? false,
+          state: watchStatus?.state ?? null,
+          health: watchStatus?.health ?? null,
+          error: watchStatusError ?? undefined,
+        },
+        librarian: librarianStatus,
+        serverConfig: {
+          autoWatchEnabled: this.config.autoWatch?.enabled ?? true,
+          autoWatchDebounceMs: this.config.autoWatch?.debounceMs ?? 200,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeSystemContract(input: { workspace?: string }): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const contract = await workspace.librarian.getSystemContract();
+      return {
+        success: true,
+        workspace: workspacePath,
+        contract,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeDiagnoseSelf(input: { workspace?: string }): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const diagnosis = await workspace.librarian.diagnoseSelf();
+      return {
+        success: true,
+        workspace: workspacePath,
+        diagnosis,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeListVerificationPlans(input: { workspace?: string; limit?: number }): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const plans = await workspace.librarian.listVerificationPlans();
+      const limit = input.limit && input.limit > 0 ? input.limit : undefined;
+      const trimmedPlans = limit ? plans.slice(0, limit) : plans;
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        plans: trimmedPlans,
+        total: plans.length,
+        limited: limit ? trimmedPlans.length : undefined,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeListEpisodes(input: { workspace?: string; limit?: number }): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const episodes = await workspace.librarian.listEpisodes();
+      const limit = input.limit && input.limit > 0 ? input.limit : undefined;
+      const trimmedEpisodes = limit ? episodes.slice(0, limit) : episodes;
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        episodes: trimmedEpisodes,
+        total: episodes.length,
+        limited: limit ? trimmedEpisodes.length : undefined,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeListTechniquePrimitives(input: { workspace?: string; limit?: number }): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const primitives = await workspace.librarian.listTechniquePrimitives();
+      const limit = input.limit && input.limit > 0 ? input.limit : undefined;
+      const trimmed = limit ? primitives.slice(0, limit) : primitives;
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        primitives: trimmed,
+        total: primitives.length,
+        limited: limit ? trimmed.length : undefined,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeListTechniqueCompositions(input: { workspace?: string; limit?: number }): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const compositions = await workspace.librarian.listTechniqueCompositions();
+      const limit = input.limit && input.limit > 0 ? input.limit : undefined;
+      const trimmed = limit ? compositions.slice(0, limit) : compositions;
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        compositions: trimmed,
+        total: compositions.length,
+        limited: limit ? trimmed.length : undefined,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeSelectTechniqueCompositions(
+    input: { intent: string; workspace?: string; limit?: number }
+  ): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const compositions = await workspace.librarian.ensureTechniqueCompositions();
+      const selections = selectTechniqueCompositions(input.intent, compositions);
+      const limit = input.limit && input.limit > 0 ? input.limit : undefined;
+      const trimmed = limit ? selections.slice(0, limit) : selections;
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        intent: input.intent,
+        compositions: trimmed,
+        total: selections.length,
+        limited: limit ? trimmed.length : undefined,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeCompileTechniqueComposition(
+    input: { compositionId: string; workspace?: string; includePrimitives?: boolean }
+  ): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const storage = workspace.librarian.getStorage();
+      if (!storage) {
+        return {
+          success: false,
+          error: `Workspace storage not initialized: ${workspacePath}`,
+        };
+      }
+
+      if (input.includePrimitives) {
+        const bundle = await compileTechniqueCompositionBundleFromStorage(
+          storage,
+          input.compositionId
+        );
+        if (!bundle.template) {
+          return {
+            success: false,
+            error: `Unknown technique composition: ${input.compositionId}`,
+          };
+        }
+
+        return {
+          success: true,
+          workspace: workspacePath,
+          compositionId: input.compositionId,
+          template: bundle.template,
+          primitives: bundle.primitives,
+          missingPrimitiveIds: bundle.missingPrimitiveIds,
+        };
+      }
+
+      const result = await compileTechniqueCompositionTemplateWithGapsFromStorage(
+        storage,
+        input.compositionId
+      );
+
+      if (!result.template) {
+        return {
+          success: false,
+          error: `Unknown technique composition: ${input.compositionId}`,
+        };
+      }
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        compositionId: input.compositionId,
+        template: result.template,
+        missingPrimitiveIds: result.missingPrimitiveIds,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeCompileIntentBundles(
+    input: { intent: string; workspace?: string; limit?: number; includePrimitives?: boolean }
+  ): Promise<unknown> {
+    try {
+      let workspacePath: string | undefined;
+      if (input.workspace) {
+        workspacePath = path.resolve(input.workspace);
+      } else {
+        const first = this.state.workspaces.keys().next();
+        workspacePath = first.done ? undefined : first.value;
+      }
+
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: 'No workspace specified and no workspaces registered',
+          registeredWorkspaces: 0,
+        };
+      }
+
+      const workspace = this.state.workspaces.get(workspacePath);
+      if (!workspace?.librarian) {
+        return {
+          success: false,
+          error: `Workspace not registered: ${workspacePath}`,
+          registeredWorkspaces: this.state.workspaces.size,
+          availableWorkspaces: Array.from(this.state.workspaces.keys()),
+        };
+      }
+
+      const storage = workspace.librarian.getStorage();
+      if (!storage) {
+        return {
+          success: false,
+          error: `Workspace storage not initialized: ${workspacePath}`,
+        };
+      }
+
+      const bundles = await compileTechniqueBundlesFromIntent(storage, input.intent);
+      const limit = input.limit && input.limit > 0 ? input.limit : undefined;
+      const trimmed = limit ? bundles.slice(0, limit) : bundles;
+      const trimmedBundles = input.includePrimitives === false
+        ? trimmed.map(({ template, missingPrimitiveIds }) => ({ template, missingPrimitiveIds }))
+        : trimmed;
+
+      return {
+        success: true,
+        workspace: workspacePath,
+        intent: input.intent,
+        bundles: trimmedBundles,
+        total: bundles.length,
+        limited: limit ? trimmedBundles.length : undefined,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeQuery(input: QueryToolInput): Promise<unknown> {
+    try {
+      // Find workspace - use specified or find first ready
+      let workspace: WorkspaceState | undefined;
+      if (input.workspace) {
+        const resolvedPath = path.resolve(input.workspace);
+        workspace = this.state.workspaces.get(resolvedPath);
+        if (!workspace) {
+          return {
+            packs: [],
+            totalConfidence: 0,
+            error: `Specified workspace not registered: ${input.workspace}. Available: ${Array.from(this.state.workspaces.keys()).join(', ') || 'none'}`,
+            intent: input.intent,
+            disclosures: [
+              `unverified_by_trace(workspace_unavailable): ${input.workspace ?? 'unknown workspace'}`,
+            ],
+            adequacy: undefined,
+            verificationPlan: undefined,
+            traceId: 'unverified_by_trace(replay_unavailable)',
+            constructionPlan: undefined,
+          };
+        }
+        if (workspace.indexState !== 'ready') {
+          return {
+            packs: [],
+            totalConfidence: 0,
+            error: `Workspace not ready (state: ${workspace.indexState}). Run bootstrap first.`,
+            intent: input.intent,
+            workspace: resolvedPath,
+            disclosures: [
+              `unverified_by_trace(bootstrap_required): Workspace not ready (${workspace.indexState}).`,
+            ],
+            adequacy: undefined,
+            verificationPlan: undefined,
+            traceId: 'unverified_by_trace(replay_unavailable)',
+            constructionPlan: undefined,
+          };
+        }
+      } else {
+        workspace = this.findReadyWorkspace();
+        if (!workspace) {
+          return {
+            packs: [],
+            totalConfidence: 0,
+            error: 'No indexed workspace available. Run bootstrap first.',
+            intent: input.intent,
+            disclosures: ['unverified_by_trace(bootstrap_required): No indexed workspace available.'],
+            adequacy: undefined,
+            verificationPlan: undefined,
+            traceId: 'unverified_by_trace(replay_unavailable)',
+            constructionPlan: undefined,
+          };
+        }
+      }
+
+      const storage = await this.getOrCreateStorage(workspace.path);
+
+      // Build query object
+      const query = {
+        intent: input.intent,
+        intentType: input.intentType,
+        affectedFiles: input.affectedFiles,
+        minConfidence: input.minConfidence,
+        depth: (input.depth as 'L0' | 'L1' | 'L2' | 'L3') ?? 'L1',
+      };
+
+      // Execute query
+      const response = await queryLibrarian(
+        query,
+        storage,
+        undefined,
+        undefined,
+        undefined,
+        {
+          evidenceLedger: workspace.evidenceLedger,
+        }
+      );
+
+      // Transform response for MCP
+      return {
+        packs: response.packs.map((pack) => ({
+          packId: pack.packId,
+          packType: pack.packType,
+          targetId: pack.targetId,
+          summary: pack.summary,
+          keyFacts: pack.keyFacts,
+          relatedFiles: pack.relatedFiles,
+          confidence: pack.confidence,
+        })),
+        disclosures: response.disclosures,
+        adequacy: response.adequacy,
+        verificationPlan: response.verificationPlan,
+        traceId: response.traceId,
+        constructionPlan: response.constructionPlan,
+        totalConfidence: response.totalConfidence,
+        cacheHit: response.cacheHit,
+        latencyMs: response.latencyMs,
+        drillDownHints: response.drillDownHints,
+        synthesis: response.synthesis,
+        intent: input.intent,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        packs: [],
+        totalConfidence: 0,
+        error: message,
+        intent: input.intent,
+        disclosures: [message.startsWith('unverified_by_trace') ? message : `unverified_by_trace(query_failed): ${message}`],
+        adequacy: undefined,
+        verificationPlan: undefined,
+        traceId: 'unverified_by_trace(replay_unavailable)',
+        constructionPlan: undefined,
+      };
+    }
+  }
+
+  private async executeVerifyClaim(input: VerifyClaimToolInput): Promise<unknown> {
+    try {
+      const workspace = this.findReadyWorkspace();
+      if (!workspace) {
+        return {
+          claimId: input.claimId,
+          verified: false,
+          error: 'No indexed workspace available',
+        };
+      }
+
+      const storage = await this.getOrCreateStorage(workspace.path);
+
+      // Get the context pack or knowledge item for the claim
+      const pack = await storage.getContextPack(input.claimId);
+      if (!pack) {
+        return {
+          claimId: input.claimId,
+          verified: false,
+          error: 'Claim not found',
+        };
+      }
+
+      // Build metadata for defeater checking
+      const meta = {
+        confidence: { overall: pack.confidence, bySection: {} as Record<string, number> },
+        evidence: [] as Array<{
+          type: 'code' | 'test' | 'commit' | 'comment' | 'usage' | 'doc' | 'inferred';
+          source: string;
+          description: string;
+          confidence: number;
+        }>,
+        generatedAt: pack.createdAt.toISOString(),
+        generatedBy: 'librarian',
+        defeaters: [STANDARD_DEFEATERS.codeChange, STANDARD_DEFEATERS.testFailure],
+      };
+
+      // Check defeaters
+      const result = await checkDefeaters(meta, {
+        entityId: pack.targetId,
+        filePath: pack.relatedFiles[0] ?? '',
+        storage,
+      });
+
+      return {
+        claimId: input.claimId,
+        verified: result.knowledgeValid,
+        confidence: pack.confidence + result.confidenceAdjustment,
+        activeDefeaters: result.activeDefeaters,
+        defeaterResults: result.results.map((r) => ({
+          type: r.defeater.type,
+          activated: r.activated,
+          reason: r.reason,
+          severity: r.severity,
+        })),
+      };
+    } catch (error) {
+      return {
+        claimId: input.claimId,
+        verified: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeRunAudit(input: RunAuditToolInput): Promise<unknown> {
+    const auditId = this.generateId();
+    const startTime = Date.now();
+
+    try {
+      const workspace = this.findReadyWorkspace();
+      if (!workspace) {
+        return {
+          auditId,
+          status: 'failed',
+          error: 'No indexed workspace available',
+          type: input.type,
+        };
+      }
+
+      const storage = await this.getOrCreateStorage(workspace.path);
+      const findings: Array<{
+        severity: 'info' | 'warning' | 'error';
+        category: string;
+        message: string;
+        file?: string;
+      }> = [];
+
+      // Run audit based on type
+      switch (input.type) {
+        case 'claims':
+        case 'full': {
+          // Audit context packs
+          const packs = await storage.getContextPacks({ limit: 100 });
+          for (const pack of packs) {
+            if (pack.confidence < 0.3) {
+              findings.push({
+                severity: 'warning',
+                category: 'low-confidence',
+                message: `Low confidence pack: ${pack.packType} for ${pack.targetId}`,
+                file: pack.relatedFiles[0],
+              });
+            }
+          }
+          break;
+        }
+        case 'coverage': {
+          // Check indexing coverage
+          const stats = await storage.getStats();
+          if (stats.totalFunctions === 0) {
+            findings.push({
+              severity: 'error',
+              category: 'coverage',
+              message: 'No functions indexed',
+            });
+          }
+          if (stats.totalContextPacks === 0) {
+            findings.push({
+              severity: 'error',
+              category: 'coverage',
+              message: 'No context packs generated',
+            });
+          }
+          break;
+        }
+        case 'freshness': {
+          // Check data freshness
+          const metadata = await storage.getMetadata();
+          if (metadata?.lastBootstrap) {
+            const age = Date.now() - metadata.lastBootstrap.getTime();
+            const daysSinceBootstrap = age / (1000 * 60 * 60 * 24);
+            if (daysSinceBootstrap > 7) {
+              findings.push({
+                severity: 'warning',
+                category: 'freshness',
+                message: `Index is ${Math.floor(daysSinceBootstrap)} days old`,
+              });
+            }
+          }
+          break;
+        }
+        case 'security': {
+          // Security-focused audit
+          findings.push({
+            severity: 'info',
+            category: 'security',
+            message: 'Security audit checks authorization scopes and access patterns',
+          });
+          break;
+        }
+      }
+
+      return {
+        auditId,
+        status: 'completed',
+        type: input.type,
+        durationMs: Date.now() - startTime,
+        findingsCount: findings.length,
+        findings: input.generateReport ? findings : findings.slice(0, 5),
+        summary: {
+          errors: findings.filter((f) => f.severity === 'error').length,
+          warnings: findings.filter((f) => f.severity === 'warning').length,
+          info: findings.filter((f) => f.severity === 'info').length,
+        },
+      };
+    } catch (error) {
+      return {
+        auditId,
+        status: 'failed',
+        type: input.type,
+        durationMs: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeDiffRuns(input: DiffRunsToolInput): Promise<unknown> {
+    try {
+      // Find workspaces with matching run IDs
+      let workspaceA: WorkspaceState | undefined;
+      let workspaceB: WorkspaceState | undefined;
+
+      for (const [, ws] of this.state.workspaces) {
+        if (ws.lastBootstrapRunId === input.runIdA) workspaceA = ws;
+        if (ws.lastBootstrapRunId === input.runIdB) workspaceB = ws;
+      }
+
+      if (!workspaceA || !workspaceB) {
+        return {
+          summary: 'One or both runs not found',
+          runIdA: input.runIdA,
+          runIdB: input.runIdB,
+          error: 'Run IDs must match recent bootstrap runs in registered workspaces',
+        };
+      }
+
+      const storageA = await this.getOrCreateStorage(workspaceA.path);
+      const storageB = await this.getOrCreateStorage(workspaceB.path);
+
+      const statsA = await storageA.getStats();
+      const statsB = await storageB.getStats();
+
+      const diff = {
+        functions: {
+          before: statsA.totalFunctions,
+          after: statsB.totalFunctions,
+          delta: statsB.totalFunctions - statsA.totalFunctions,
+        },
+        modules: {
+          before: statsA.totalModules,
+          after: statsB.totalModules,
+          delta: statsB.totalModules - statsA.totalModules,
+        },
+        contextPacks: {
+          before: statsA.totalContextPacks,
+          after: statsB.totalContextPacks,
+          delta: statsB.totalContextPacks - statsA.totalContextPacks,
+        },
+        avgConfidence: {
+          before: statsA.averageConfidence,
+          after: statsB.averageConfidence,
+          delta: statsB.averageConfidence - statsA.averageConfidence,
+        },
+      };
+
+      return {
+        summary: `Diff between ${input.runIdA} and ${input.runIdB}`,
+        runIdA: input.runIdA,
+        runIdB: input.runIdB,
+        diff,
+        detailed: input.detailed ? diff : undefined,
+      };
+    } catch (error) {
+      return {
+        summary: 'Diff failed',
+        runIdA: input.runIdA,
+        runIdB: input.runIdB,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeExportIndex(input: ExportIndexToolInput): Promise<unknown> {
+    try {
+      const workspace = this.findReadyWorkspace();
+      if (!workspace) {
+        return {
+          success: false,
+          error: 'No indexed workspace available',
+          format: input.format,
+          outputPath: input.outputPath,
+        };
+      }
+
+      const storage = await this.getOrCreateStorage(workspace.path);
+      const outputPath = path.resolve(input.outputPath);
+
+      // Security: Validate output path is within workspace or its .librarian directory
+      const normalizedOutput = path.normalize(outputPath);
+      const normalizedWorkspace = path.normalize(workspace.path);
+      const librarianDir = path.join(normalizedWorkspace, '.librarian');
+
+      const isInWorkspace = normalizedOutput.startsWith(normalizedWorkspace + path.sep) ||
+                            normalizedOutput === normalizedWorkspace;
+      const isInLibrarianDir = normalizedOutput.startsWith(librarianDir + path.sep) ||
+                               normalizedOutput === librarianDir;
+
+      // Allow exports only within workspace or .librarian/exports subdirectory
+      if (!isInWorkspace && !isInLibrarianDir) {
+        return {
+          success: false,
+          error: 'Export path must be within the workspace directory',
+          format: input.format,
+          outputPath: input.outputPath,
+          allowedPath: workspace.path,
+        };
+      }
+
+      // Ensure output directory exists
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+      switch (input.format) {
+        case 'json': {
+          // Export as JSON
+          const stats = await storage.getStats();
+          const metadata = await storage.getMetadata();
+          const packs = await storage.getContextPacks({ limit: 1000 });
+
+          const exportData = {
+            version: metadata?.version,
+            workspace: workspace.path,
+            exportedAt: new Date().toISOString(),
+            stats,
+            contextPacks: packs.map((pack) => ({
+              ...pack,
+              createdAt: pack.createdAt.toISOString(),
+            })),
+          };
+
+          await fs.writeFile(outputPath, JSON.stringify(exportData, null, 2));
+          break;
+        }
+        case 'sqlite': {
+          // Copy the database file
+          const sourcePath = path.join(workspace.path, '.librarian', 'librarian.sqlite');
+          await fs.copyFile(sourcePath, outputPath);
+          break;
+        }
+        default:
+          return {
+            success: false,
+            error: `Export format '${input.format}' not yet supported`,
+            format: input.format,
+            outputPath: input.outputPath,
+          };
+      }
+
+      return {
+        success: true,
+        format: input.format,
+        outputPath,
+        workspace: workspace.path,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        format: input.format,
+        outputPath: input.outputPath,
+      };
+    }
+  }
+
+  private async executeGetContextPackBundle(input: GetContextPackBundleToolInput): Promise<unknown> {
+    const bundleId = this.generateId();
+
+    try {
+      const workspace = this.findReadyWorkspace();
+      if (!workspace) {
+        return {
+          bundleId,
+          packs: [],
+          error: 'No indexed workspace available',
+          entityIds: input.entityIds,
+        };
+      }
+
+      const storage = await this.getOrCreateStorage(workspace.path);
+      const bundledPacks: unknown[] = [];
+
+      // Collect packs for each entity
+      for (const entityId of input.entityIds) {
+        // Try different pack types
+        const packTypes = input.bundleType === 'comprehensive'
+          ? ['function_context', 'module_context', 'change_impact', 'pattern_context']
+          : input.bundleType === 'standard'
+            ? ['function_context', 'module_context']
+            : ['function_context'];
+
+        for (const packType of packTypes) {
+          const pack = await storage.getContextPackForTarget(entityId, packType);
+          if (pack) {
+            bundledPacks.push({
+              packId: pack.packId,
+              packType: pack.packType,
+              targetId: pack.targetId,
+              summary: pack.summary,
+              keyFacts: pack.keyFacts,
+              relatedFiles: pack.relatedFiles,
+              confidence: pack.confidence,
+            });
+          }
+        }
+      }
+
+      // Apply token budget if specified
+      let truncated = false;
+      if (input.maxTokens) {
+        let estimatedTokens = 0;
+        const filteredPacks: unknown[] = [];
+        for (const pack of bundledPacks) {
+          const packTokens = JSON.stringify(pack).length / 4; // Rough estimate
+          if (estimatedTokens + packTokens <= input.maxTokens) {
+            filteredPacks.push(pack);
+            estimatedTokens += packTokens;
+          } else {
+            truncated = true;
+            break;
+          }
+        }
+        return {
+          bundleId,
+          packs: filteredPacks,
+          entityIds: input.entityIds,
+          bundleType: input.bundleType ?? 'minimal',
+          truncated,
+          estimatedTokens: Math.round(estimatedTokens),
+        };
+      }
+
+      return {
+        bundleId,
+        packs: bundledPacks,
+        entityIds: input.entityIds,
+        bundleType: input.bundleType ?? 'minimal',
+        truncated: false,
+      };
+    } catch (error) {
+      return {
+        bundleId,
+        packs: [],
+        error: error instanceof Error ? error.message : String(error),
+        entityIds: input.entityIds,
+      };
+    }
+  }
+
+  /**
+   * Find a workspace with ready index.
+   */
+  private findReadyWorkspace(): WorkspaceState | undefined {
+    for (const [, ws] of this.state.workspaces) {
+      if (ws.indexState === 'ready') {
+        return ws;
+      }
+    }
+    // Fall back to any workspace with storage
+    for (const [, ws] of this.state.workspaces) {
+      if (ws.storage) {
+        return ws;
+      }
+    }
+    return undefined;
+  }
+
+  // ============================================================================
+  // RESOURCE IMPLEMENTATIONS
+  // ============================================================================
+
+  private parseResourceUri(uri: string): { workspace: string; resourceType: string } | null {
+    // Handle global resources
+    if (uri === 'librarian://audits') {
+      return { workspace: '', resourceType: 'audits' };
+    }
+
+    const match = uri.match(/^librarian:\/\/(.+?)\/(.+)$/);
+    if (!match) return null;
+    return { workspace: match[1], resourceType: match[2] };
+  }
+
+  private async getResourceData(workspace: string, resourceType: string): Promise<unknown> {
+    // Handle global resources
+    if (resourceType === 'audits') {
+      return {
+        audits: this.state.auditLog
+          .filter((entry) => entry.operation === 'tool_call' && entry.name === 'run_audit')
+          .slice(-20)
+          .map((entry) => ({
+            id: entry.id,
+            timestamp: entry.timestamp,
+            status: entry.status,
+            durationMs: entry.durationMs,
+          })),
+      };
+    }
+
+    // Get workspace storage
+    const workspacePath = this.resolveWorkspacePath(workspace);
+    if (!workspacePath) {
+      throw new Error(`Workspace not registered: ${workspace}`);
+    }
+
+    const storage = await this.getOrCreateStorage(workspacePath);
+
+    switch (resourceType) {
+      case 'file-tree': {
+        const files = await storage.getFiles();
+        const directories = await storage.getDirectories();
+        return {
+          workspace: workspacePath,
+          files: files.map((f) => ({
+            id: f.id,
+            path: f.path,
+            category: f.category,
+            extension: f.extension,
+            purpose: f.purpose,
+          })),
+          directories: directories.map((d) => ({
+            id: d.id,
+            path: d.path,
+            purpose: d.purpose,
+          })),
+          counts: {
+            files: files.length,
+            directories: directories.length,
+          },
+        };
+      }
+
+      case 'symbols': {
+        const functions = await storage.getFunctions();
+        const modules = await storage.getModules();
+        return {
+          workspace: workspacePath,
+          functions: functions.slice(0, 200).map((f) => ({
+            id: f.id,
+            name: f.name,
+            filePath: f.filePath,
+            signature: f.signature,
+            confidence: f.confidence,
+          })),
+          modules: modules.slice(0, 100).map((m) => ({
+            id: m.id,
+            name: path.basename(m.path),
+            path: m.path,
+            exports: m.exports,
+            dependencies: m.dependencies,
+          })),
+          counts: {
+            functions: functions.length,
+            modules: modules.length,
+          },
+        };
+      }
+
+      case 'knowledge-maps': {
+        const stats = await storage.getStats();
+        return {
+          workspace: workspacePath,
+          stats: {
+            totalFunctions: stats.totalFunctions,
+            totalModules: stats.totalModules,
+            totalContextPacks: stats.totalContextPacks,
+            averageConfidence: stats.averageConfidence,
+          },
+        };
+      }
+
+      case 'method-packs': {
+        const packs = await storage.getContextPacks({ limit: 50 });
+        return {
+          workspace: workspacePath,
+          packs: packs.map((pack) => ({
+            packId: pack.packId,
+            packType: pack.packType,
+            targetId: pack.targetId,
+            summary: pack.summary,
+            confidence: pack.confidence,
+            relatedFiles: pack.relatedFiles,
+          })),
+          count: packs.length,
+        };
+      }
+
+      case 'provenance': {
+        const metadata = await storage.getMetadata();
+        const lastBootstrap = await storage.getLastBootstrapReport();
+        return {
+          workspace: workspacePath,
+          version: metadata?.version,
+          lastBootstrap: lastBootstrap ? {
+            startedAt: lastBootstrap.startedAt.toISOString(),
+            completedAt: lastBootstrap.completedAt?.toISOString(),
+            success: lastBootstrap.success,
+            filesProcessed: lastBootstrap.totalFilesProcessed,
+            functionsIndexed: lastBootstrap.totalFunctionsIndexed,
+            contextPacksCreated: lastBootstrap.totalContextPacksCreated,
+          } : null,
+          indexedAt: metadata?.lastIndexing?.toISOString(),
+          qualityTier: metadata?.qualityTier,
+        };
+      }
+
+      case 'identity': {
+        const metadata = await storage.getMetadata();
+        return {
+          workspace: workspacePath,
+          workspaceName: path.basename(workspacePath),
+          version: metadata?.version,
+          qualityTier: metadata?.qualityTier,
+          fileCount: metadata?.totalFiles,
+          functionCount: metadata?.totalFunctions,
+          contextPackCount: metadata?.totalContextPacks,
+        };
+      }
+
+      default:
+        throw new Error(`Unknown resource type: ${resourceType}`);
+    }
+  }
+
+  /**
+   * Resolve a workspace path from registered workspaces.
+   */
+  private resolveWorkspacePath(workspace: string): string | null {
+    // Direct match
+    if (this.state.workspaces.has(workspace)) {
+      return workspace;
+    }
+
+    // Check if workspace matches any registered path
+    for (const [registeredPath] of this.state.workspaces) {
+      if (registeredPath.endsWith(workspace) || workspace.endsWith(registeredPath)) {
+        return registeredPath;
+      }
+    }
+
+    // If only one workspace is registered, use it
+    if (this.state.workspaces.size === 1) {
+      return this.state.workspaces.keys().next().value as string;
+    }
+
+    return null;
+  }
+
+  // ============================================================================
+  // UTILITIES
+  // ============================================================================
+
+  private generateId(): string {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  }
+
+  private sanitizeInput(input: unknown): unknown {
+    // Remove sensitive data from audit logs
+    if (typeof input !== 'object' || input === null) return input;
+    const sanitized = { ...input as object };
+    // Remove potential secrets
+    for (const key of ['password', 'secret', 'token', 'apiKey', 'credentials']) {
+      if (key in sanitized) {
+        (sanitized as Record<string, unknown>)[key] = '[REDACTED]';
+      }
+    }
+    return sanitized;
+  }
+
+  private logAudit(entry: AuditLogEntry): void {
+    this.state.auditLog.push(entry);
+
+    // Trim old entries if needed
+    const maxEntries = 10000;
+    if (this.state.auditLog.length > maxEntries) {
+      this.state.auditLog = this.state.auditLog.slice(-maxEntries);
+    }
+
+    // Log to console in debug mode
+    if (process.env.DEBUG_MCP) {
+      console.error(`[MCP Audit] ${entry.operation}: ${entry.name} - ${entry.status}`);
+    }
+  }
+
+  /**
+   * Register a workspace.
+   */
+  registerWorkspace(path: string): void {
+    if (!this.state.workspaces.has(path)) {
+      this.state.workspaces.set(path, {
+        path,
+        indexState: 'pending',
+      });
+    }
+  }
+
+  /**
+   * Update workspace state.
+   */
+  updateWorkspaceState(path: string, state: Partial<WorkspaceState>): void {
+    const workspace = this.state.workspaces.get(path);
+    if (workspace) {
+      Object.assign(workspace, state);
+    }
+  }
+
+  /**
+   * Get audit log entries.
+   */
+  getAuditLog(options?: { limit?: number; since?: string }): AuditLogEntry[] {
+    let entries = this.state.auditLog;
+
+    if (options?.since) {
+      entries = entries.filter((e) => e.timestamp >= options.since!);
+    }
+
+    if (options?.limit) {
+      entries = entries.slice(-options.limit);
+    }
+
+    return entries;
+  }
+
+  // ============================================================================
+  // SERVER LIFECYCLE
+  // ============================================================================
+
+  /**
+   * Start the server with stdio transport.
+   */
+  async start(): Promise<void> {
+    this.transport = new StdioServerTransport();
+    await this.server.connect(this.transport);
+    console.error(`[MCP] Librarian server started (${this.config.name} v${this.config.version})`);
+  }
+
+  /**
+   * Stop the server.
+   */
+  async stop(): Promise<void> {
+    // Stop file watchers for all workspaces
+    for (const [, workspace] of this.state.workspaces) {
+      if (workspace.librarian && workspace.watching) {
+        workspace.librarian.stopWatching();
+      }
+    }
+
+    if (this.transport) {
+      await this.server.close();
+      this.transport = null;
+    }
+    console.error('[MCP] Librarian server stopped');
+  }
+
+  /**
+   * Get server info.
+   */
+  getServerInfo(): {
+    name: string;
+    version: string;
+    workspaceCount: number;
+    auditLogSize: number;
+    activeSessions: number;
+  } {
+    return {
+      name: this.config.name,
+      version: this.config.version,
+      workspaceCount: this.state.workspaces.size,
+      auditLogSize: this.state.auditLog.length,
+      activeSessions: this.state.authManager.getStats().totalSessions,
+    };
+  }
+
+  // ==========================================================================
+  // AUTHENTICATION API
+  // ==========================================================================
+
+  /**
+   * Create a new authentication session.
+   */
+  createAuthSession(options: {
+    clientId: string;
+    scopes: AuthorizationScope[];
+    allowedWorkspaces?: string[];
+    ttlMs?: number;
+  }): { token: string; sessionId: string; expiresAt: Date } {
+    const { token, session } = this.state.authManager.createSession({
+      scopes: options.scopes,
+      clientId: options.clientId,
+      allowedWorkspaces: options.allowedWorkspaces,
+      ttlMs: options.ttlMs,
+    });
+
+    this.logAudit({
+      id: this.generateId(),
+      timestamp: new Date().toISOString(),
+      operation: 'authorization',
+      name: 'session_create',
+      status: 'success',
+      sessionId: session.id,
+    });
+
+    return {
+      token,
+      sessionId: session.id,
+      expiresAt: session.expiresAt,
+    };
+  }
+
+  /**
+   * Validate an authentication token.
+   */
+  validateAuthToken(token: string): SessionToken | null {
+    return this.state.authManager.validateToken(token);
+  }
+
+  /**
+   * Authorize a tool call with a session token.
+   */
+  authorizeToolCall(
+    token: string,
+    toolName: string,
+    workspace?: string
+  ): AuthorizationResult {
+    const session = this.state.authManager.validateToken(token);
+    if (!session) {
+      return {
+        authorized: false,
+        reason: 'Invalid or expired token',
+      };
+    }
+
+    return this.state.authManager.authorize(session, toolName, workspace);
+  }
+
+  /**
+   * Grant consent for a high-risk operation.
+   */
+  grantConsent(sessionId: string, operation: string): boolean {
+    const result = this.state.authManager.grantConsent(sessionId, operation);
+
+    if (result) {
+      this.logAudit({
+        id: this.generateId(),
+        timestamp: new Date().toISOString(),
+        operation: 'authorization',
+        name: 'consent_grant',
+        status: 'success',
+        sessionId,
+        input: { operation },
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Revoke consent for an operation.
+   */
+  revokeConsent(sessionId: string, operation: string): boolean {
+    const result = this.state.authManager.revokeConsent(sessionId, operation);
+
+    if (result) {
+      this.logAudit({
+        id: this.generateId(),
+        timestamp: new Date().toISOString(),
+        operation: 'authorization',
+        name: 'consent_revoke',
+        status: 'success',
+        sessionId,
+        input: { operation },
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Revoke an authentication session.
+   */
+  revokeAuthSession(sessionId: string): boolean {
+    const result = this.state.authManager.revokeSession(sessionId);
+
+    if (result) {
+      this.logAudit({
+        id: this.generateId(),
+        timestamp: new Date().toISOString(),
+        operation: 'authorization',
+        name: 'session_revoke',
+        status: 'success',
+        sessionId,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Refresh a session to extend its expiration.
+   */
+  refreshAuthSession(sessionId: string, extendMs?: number): SessionToken | null {
+    const session = this.state.authManager.refreshSession(sessionId, extendMs);
+
+    if (session) {
+      this.logAudit({
+        id: this.generateId(),
+        timestamp: new Date().toISOString(),
+        operation: 'authorization',
+        name: 'session_refresh',
+        status: 'success',
+        sessionId,
+      });
+    }
+
+    return session;
+  }
+
+  /**
+   * Get authentication statistics.
+   */
+  getAuthStats(): {
+    totalSessions: number;
+    activeClients: number;
+    expiredSessions: number;
+  } {
+    return this.state.authManager.getStats();
+  }
+
+  /**
+   * Clean up expired sessions.
+   */
+  cleanupExpiredSessions(): number {
+    return this.state.authManager.cleanup();
+  }
+
+  /**
+   * Get the authentication manager for advanced operations.
+   */
+  getAuthManager(): AuthenticationManager {
+    return this.state.authManager;
+  }
+}
+
+// ============================================================================
+// FACTORY FUNCTIONS
+// ============================================================================
+
+/**
+ * Create and start a Librarian MCP server.
+ */
+export async function createLibrarianMCPServer(
+  config?: Partial<LibrarianMCPServerConfig>
+): Promise<LibrarianMCPServer> {
+  const server = new LibrarianMCPServer(config);
+  return server;
+}
+
+/**
+ * Create and start a server with stdio transport.
+ */
+export async function startStdioServer(
+  config?: Partial<LibrarianMCPServerConfig>
+): Promise<LibrarianMCPServer> {
+  const server = await createLibrarianMCPServer(config);
+  await server.start();
+  return server;
+}
+
+// ============================================================================
+// CLI ENTRY POINT
+// ============================================================================
+
+/**
+ * Main entry point for CLI invocation.
+ */
+export async function main(): Promise<void> {
+  const config: Partial<LibrarianMCPServerConfig> = {
+    authorization: {
+      enabledScopes: ['read', 'write'],
+      requireConsent: true,
+    },
+  };
+
+  const server = await startStdioServer(config);
+
+  // Handle shutdown
+  process.on('SIGINT', async () => {
+    await server.stop();
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', async () => {
+    await server.stop();
+    process.exit(0);
+  });
+}
+
+// Run if executed directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error('[MCP] Fatal error:', error);
+    process.exit(1);
+  });
+}

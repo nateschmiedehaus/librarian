@@ -1,0 +1,90 @@
+# Librarian Documentation (Canonical)
+
+Status: partial
+Scope: entrypoint for the Librarian knowledge system docs and decision tree.
+Last Verified: 2026-01-04
+Owner: librarianship
+Evidence: docs only (implementation evidence lives in STATUS.md)
+
+## What Librarian Is
+Librarian is the knowledge and understanding layer for any codebase. It
+extracts, constructs, and serves evidence-backed understanding for agents
+and humans, with calibrated confidence, defeaters, and explicit traces.
+
+## What Librarian Provides
+- Understanding: purpose, mechanism, contract, dependencies, consequences.
+- Knowledge mappings: dependency, data flow, ownership, risk, tests, rationale.
+- Agent-ready responses: answer + evidence + confidence + next actions.
+- Method guidance: hints and checklists for applicable problem-solving methods.
+- Full lifecycle support: onboarding, change, debug, refactor, release.
+- Universal codebase support: immediate onboarding for new languages.
+
+## What Librarian Is Not
+- Not a general-purpose orchestrator or task runner.
+- Not a replacement for tests, reviews, or CI.
+- Not a fake-embedding system or heuristic-only retrieval.
+
+## Start Here (Decision Tree)
+- Doc architecture + governance -> `docs/librarian/DOCS_ARCHITECTURE.md`
+- Non-negotiable mission -> `docs/librarian/VISION.md`
+- System architecture + directory map -> `docs/librarian/SYSTEM_ARCHITECTURE.md`
+- Knowledge ontology + mappings -> `docs/librarian/UNDERSTANDING_LAYER.md`
+- Use-case coverage -> `docs/librarian/scenarios.md`
+- Use-case matrix (250+ needs + method catalog + coverage audit) -> `docs/librarian/USE_CASE_MATRIX.md`
+- Wiring and pipelines -> `docs/librarian/PIPELINES_AND_WIRING.md`
+- Implementation plan -> `docs/librarian/WORKPLAN.md`
+- Integration plan -> `docs/librarian/IMPLEMENTATION_INTEGRATION_PLAN.md`
+- Packaging and onboarding -> `docs/librarian/PACKAGING_AND_ONBOARDING.md`
+- Model selection policy -> `docs/librarian/MODEL_POLICY.md`
+- Validation and audits -> `docs/librarian/validation.md`, `docs/librarian/AUDIT.md`
+- Target vs reality -> `docs/librarian/STATUS.md`
+- Phase 6+ (super-brain roadmap; planned) -> `docs/librarian/SUPER_BRAIN_PLAN.md`
+- Super-brain implementation protocol -> `docs/librarian/SUPER_BRAIN_IMPLEMENTATION_PROTOCOL.md`
+
+## Canonical Doc Map
+- `docs/librarian/DOCS_ARCHITECTURE.md` (doc governance)
+- `docs/librarian/VISION.md` (why we exist)
+- `docs/librarian/SYSTEM_ARCHITECTURE.md` (components, boundaries, directory map)
+- `docs/librarian/UNDERSTANDING_LAYER.md` (knowledge primitives + constructions)
+- `docs/librarian/scenarios.md` (use-case taxonomy + prompts)
+- `docs/librarian/USE_CASE_MATRIX.md` (use-case matrix + dependencies + method catalog)
+- `docs/librarian/PIPELINES_AND_WIRING.md` (end-to-end system wiring)
+- `docs/librarian/WORKPLAN.md` (phased build plan)
+- `docs/librarian/IMPLEMENTATION_INTEGRATION_PLAN.md` (Wave0 + external integration plan)
+- `docs/librarian/PACKAGING_AND_ONBOARDING.md` (packaging + onboarding)
+- `docs/librarian/MODEL_POLICY.md` (daily model selection)
+- `docs/librarian/validation.md` (test and evidence gates)
+- `docs/librarian/AUDIT.md` (audit runbook)
+- `docs/librarian/STATUS.md` (target vs reality, evidence linked)
+- `docs/librarian/SUPER_BRAIN_PLAN.md` (Phase 6+: super-brain roadmap; planned)
+- `docs/librarian/MASTER.md` (working synthesis notes; not canonical)
+
+## How to Interpret Docs
+- `STATUS.md` is reality with evidence; treat it as truth.
+- `WORKPLAN.md` is forward-looking; treat it as intent until verified.
+- `legacy/` is research-only; do not treat it as current guidance.
+
+## System Success Criteria
+- Every answer includes evidence, confidence, and defeaters.
+- Every scenario in `docs/librarian/scenarios.md` is answerable end-to-end.
+- Every row in `docs/librarian/USE_CASE_MATRIX.md` maps to architecture or plans.
+- No provider bypass, no fake embeddings, no unverified claims.
+- Librarian is the single source of understanding for Wave0.
+- Any language is supported on first encounter with explicit evidence.
+
+## Operational Rules (Hard)
+- CLI auth only (no API keys).
+- Providers checked via `checkAllProviders()`.
+- Daily model selection is mandatory and recorded in `state/audits/model_selection/`.
+- Cheapest SOTA models are required (Haiku-class for Librarian unless proven insufficient).
+- If providers are unavailable, fail with `unverified_by_trace(provider_unavailable)`.
+- New language detection must trigger immediate adapter onboarding (no hard fail).
+- Default to waiting for long-running steps unless explicitly directed otherwise.
+
+## Legacy Research
+Historical docs are archived in `docs/librarian/legacy/` and must be
+explicitly merged into canonical docs before being relied upon.
+
+## Open-Source Growth
+Librarian is designed to be an open-source knowledge system with explicit
+extension points, contribution standards, and community-driven evolution.

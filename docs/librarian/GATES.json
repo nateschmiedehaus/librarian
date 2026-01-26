@@ -1,0 +1,227 @@
+{
+  "$schema": "./gates.schema.json",
+  "version": "2.1.0",
+  "lastUpdated": "2026-01-25T00:00:00Z",
+  "updatedBy": "codex",
+  "description": "Machine-readable gate status with tiered testing architecture (see specs/core/testing-architecture.md)",
+
+  "tasks": {
+    "layer0.typecheck": {
+      "name": "Package Typecheck",
+      "layer": 0,
+      "command": "cd packages/librarian && npx tsc --noEmit",
+      "status": "pass",
+      "lastRun": "2026-01-22",
+      "evidence": "Typecheck passes",
+      "dependsOn": []
+    },
+    "layer0.build": {
+      "name": "Repo Build",
+      "layer": 0,
+      "command": "npm run build",
+      "status": "pass",
+      "lastRun": "2026-01-22",
+      "evidence": "repo_loc_total=266251, complexity OK",
+      "dependsOn": ["layer0.typecheck"]
+    },
+    "layer0.tier0": {
+      "name": "Tier-0 Tests (Deterministic)",
+      "layer": 0,
+      "command": "LIBRARIAN_TEST_MODE=unit npm --prefix packages/librarian test -- --run",
+      "status": "pass",
+      "lastRun": "2026-01-25",
+      "evidence": "Unit run: 176 test files (172 passed, 4 skipped); 2420 tests (2320 passed, 100 skipped)",
+      "spec": "specs/core/testing-architecture.md",
+      "dependsOn": ["layer0.build"]
+    },
+    "layer0.tier1": {
+      "name": "Tier-1 Tests (Integration)",
+      "layer": 0,
+      "command": "LIBRARIAN_TEST_MODE=integration npm --prefix packages/librarian test -- --run",
+      "status": "skip_when_unavailable",
+      "lastRun": "2026-01-24",
+      "evidence": "Skips gracefully when providers unavailable",
+      "spec": "specs/core/testing-architecture.md",
+      "dependsOn": ["layer0.tier0"]
+    },
+    "layer0.tier2": {
+      "name": "Tier-2 Tests (System)",
+      "layer": 0,
+      "command": "LIBRARIAN_TEST_MODE=system npm --prefix packages/librarian test -- --run src/__tests__/mvp_librarian.system.test.ts",
+      "status": "requires_providers",
+      "lastRun": null,
+      "evidence": null,
+      "note": "LIB-S* system tests require live LLM/embedding providers",
+      "spec": "specs/core/testing-architecture.md",
+      "dependsOn": ["layer0.tier1"]
+    },
+    "layer0.tier2.useCaseFoundation30": {
+      "name": "Tier-2 Use-Case Foundation (UC-001…UC-030)",
+      "layer": 0,
+      "command": "LIBRARIAN_TEST_MODE=system npm --prefix packages/librarian test -- --run src/__tests__/use_case_foundation_30.system.test.ts",
+      "status": "requires_providers",
+      "lastRun": null,
+      "evidence": null,
+      "note": "Explicit end-to-end execution of the L0 foundation slice against a controlled fixture repo; fails honestly if providers are unavailable",
+      "spec": "specs/use-case-targets.md",
+      "dependsOn": ["layer0.tier1"]
+    },
+    "layer0.tier2.useCaseFixtureSuite": {
+      "name": "Tier-2 Use-Case Fixture Grounding Suite",
+      "layer": 0,
+      "command": "LIBRARIAN_TEST_MODE=system npm --prefix packages/librarian test -- --run src/__tests__/use_case_suite.system.test.ts",
+      "status": "requires_providers",
+      "lastRun": null,
+      "evidence": null,
+      "note": "Controlled ground-truth fixture checks to prevent regressions that appear correct in prose but are not file-grounded",
+      "spec": "specs/use-case-targets.md",
+      "dependsOn": ["layer0.tier1"]
+    },
+
+    "layer1.noWave0Imports": {
+      "name": "No Wave0 Imports",
+      "layer": 1,
+      "command": "rg \"src/(wave0|orchestrator)/\" packages/librarian/src || echo PASS",
+      "status": "pass",
+      "lastRun": "2026-01-22",
+      "evidence": "No wave0/orchestrator references in package",
+      "dependsOn": ["layer0.tier0"]
+    },
+    "layer1.noDirectImports": {
+      "name": "No Direct Librarian Imports",
+      "layer": 1,
+      "command": "rg \"from '\\.\\./librarian/\" src --glob '!src/librarian/**' || echo PASS",
+      "status": "pass",
+      "lastRun": "2026-01-22",
+      "evidence": "No direct imports outside shim",
+      "dependsOn": ["layer0.tier0"]
+    },
+    "layer1.standaloneTests": {
+      "name": "Package Tests Standalone",
+      "layer": 1,
+      "command": "cd packages/librarian && LIBRARIAN_TEST_MODE=unit npm test -- --run",
+      "status": "pass",
+      "lastRun": "2026-01-25",
+      "evidence": "Standalone package unit run passed (invoked via deterministic --run mode)",
+      "dependsOn": ["layer1.noWave0Imports", "layer1.noDirectImports"]
+    },
+    "layer1.extractionPrereqs": {
+      "name": "Extraction Prerequisites (Deterministic)",
+      "layer": 1,
+      "command": "node scripts/check_librarian_extraction_prereqs.mjs --root .",
+      "status": "pass",
+      "lastRun": "2026-01-25",
+      "evidence": "Prereq check passes (package metadata + no Wave0-internal imports in package sources)",
+      "dependsOn": ["layer1.standaloneTests"]
+    },
+
+    "layer2.llmAdapter": {
+      "name": "LLM Adapter Complete",
+      "layer": 2,
+      "command": "rg \"new LLMService\\(\" packages/librarian/src --glob '!**/adapters/**' --glob '!**/__tests__/**' || echo PASS",
+      "status": "pass",
+      "lastRun": "2026-01-24",
+      "evidence": "rg check: no LLMService instantiations outside adapters/tests",
+      "dependsOn": ["layer1.standaloneTests"]
+    },
+    "layer2.evidenceLedger": {
+      "name": "Evidence Ledger Unified",
+      "layer": 2,
+      "command": "cd packages/librarian && npx vitest run src/mcp/__tests__/audit.test.ts src/mcp/__tests__/tool_adapter_bridge.test.ts",
+      "status": "partial",
+      "lastRun": "2026-01-24",
+      "evidence": "MCP audit logger appends tool_call entries to SqliteEvidenceLedger; MCP server tool calls also emit tool_call evidence (provider/query pipeline wiring still incomplete)",
+      "dependsOn": ["layer1.standaloneTests"]
+    },
+    "layer2.capabilityNegotiation": {
+      "name": "Capability Negotiation",
+      "layer": 2,
+      "command": "cd packages/librarian && npx vitest run src/__tests__/capability_contracts.test.ts",
+      "status": "pass",
+      "lastRun": "2026-01-24",
+      "evidence": "capability_contracts.test.ts passing (Tier-0 deterministic)",
+      "dependsOn": ["layer1.standaloneTests"]
+    },
+    "layer2.toolAdapter": {
+      "name": "Tool/MCP Adapter",
+      "layer": 2,
+      "command": "cd packages/librarian && npx vitest run src/mcp/__tests__/tool_adapter_bridge.test.ts",
+      "status": "pass",
+      "lastRun": "2026-01-24",
+      "evidence": "tool_adapter_bridge.test.ts passing: MCP server callTool records tool calls to workspace evidence ledger",
+      "dependsOn": ["layer2.evidenceLedger"]
+    },
+
+    "layer3.P0": { "name": "LLM Provider Discovery", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer2.toolAdapter"] },
+    "layer3.P1": { "name": "Operator Execution", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P0"] },
+    "layer3.P2": { "name": "Semantic Selector", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P0"] },
+    "layer3.P3": { "name": "LCL Core", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P0", "layer3.P1"] },
+    "layer3.P4": { "name": "Structure Templates", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P3"] },
+    "layer3.P5": { "name": "Pattern Catalog", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P3"] },
+    "layer3.P6": { "name": "Codebase Advisor", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P5"] },
+    "layer3.P7": { "name": "Evolution Engine", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P6"] },
+    "layer3.P8": { "name": "Zero-Knowledge Bootstrap", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P1"] },
+    "layer3.P9": { "name": "Universal Applicability", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P8"] },
+    "layer3.P10": { "name": "Epistemic Policy", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P9"] },
+    "layer3.P11": { "name": "Storage Interface Split", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P10"] },
+    "layer3.P12": { "name": "Transaction Boundaries", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P11"] },
+    "layer3.P13": { "name": "Prediction-Oriented Memory", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P12"] },
+    "layer3.P14": { "name": "Self-Aware Oracle", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P13"] },
+    "layer3.P15": { "name": "Proof-Carrying Context", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P14"] },
+    "layer3.P16": { "name": "Causal Discovery", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P15"] },
+    "layer3.P17": { "name": "Bi-Temporal Knowledge", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P16"] },
+    "layer3.P18": { "name": "Metacognitive Architecture", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P17"] },
+
+    "layer3.Q1": { "name": "ConfidenceValue Type", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer0.tier0"] },
+    "layer3.Q2": { "name": "Derivation Rules", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1"] },
+    "layer3.Q3": { "name": "Degradation Handlers", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1"] },
+    "layer3.Q4": { "name": "Migration Script", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q1", "layer3.Q2", "layer3.Q3"] },
+    "layer3.Q5": { "name": "Migrate claim confidence surfaces", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q4"] },
+    "layer3.Q6": { "name": "Rename heuristic confidence fields", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q5"] },
+    "layer3.Q7": { "name": "Reduce legacy placeholder usage", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q5"] },
+    "layer3.Q8": {
+      "name": "TypeScript enforcement (claim boundary)",
+      "layer": 3,
+      "status": "partial",
+      "lastRun": "2026-01-24",
+      "evidence": "Claim-confidence boundary guidance exists; enforcement is still incomplete and not yet automated as a hard lint gate",
+      "verified": false,
+      "dependsOn": ["layer3.Q1"]
+    },
+
+    "layer3.D1": { "name": "7 Domain Primitives", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1", "layer3.Q2", "layer3.Q3"] },
+    "layer3.D2": { "name": "10 World-Class Compositions", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D1"] },
+    "layer3.D3": { "name": "Domain Construction Protocol", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D2"] },
+    "layer3.D4": { "name": "Aspect Decomposer", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D3"] },
+
+    "layer3.C1": { "name": "Claim-Outcome Tracking", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q2"] },
+    "layer3.C2": { "name": "Calibration Curves", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.C1"] },
+    "layer3.C3": { "name": "Confidence Adjustment", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.C2"] },
+    "layer3.C4": { "name": "Calibration Dashboard", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.C2"] },
+
+    "layer4.verification": {
+      "name": "Final Verification",
+      "layer": 4,
+      "status": "pending",
+      "dependsOn": ["layer3.P18", "layer3.Q8", "layer3.D4", "layer3.C4"]
+    },
+
+    "layer1.repoExtraction": {
+      "name": "Repository Extraction (Standalone Repo Cutover)",
+      "layer": 1,
+      "status": "not_started",
+      "currentState": "packages/librarian within wave0-autopilot",
+      "targetState": "standalone repository",
+      "dependsOn": ["layer1.standaloneTests"]
+    }
+  },
+
+  "summary": {
+    "layer0": { "total": 7, "pass": 3, "skip_when_unavailable": 1, "requires_providers": 3 },
+    "layer1": { "total": 5, "pass": 4, "unknown": 0, "not_started": 1 },
+    "layer2": { "total": 4, "pass": 3, "partial": 1, "not_implemented": 0 },
+    "layer3": { "total": 34, "implemented_unverified": 25, "not_implemented": 8, "partial": 1 },
+    "layer4": { "total": 1, "pending": 1 },
+    "layer5": { "total": 0 }
+  }
+}

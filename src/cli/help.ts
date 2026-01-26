@@ -1,0 +1,501 @@
+/**
+ * @fileoverview Detailed help text for librarian CLI commands
+ */
+
+const HELP_TEXT = {
+  main: `
+Librarian CLI - Developer Experience Interface for Wave0 Knowledge System
+
+USAGE:
+    librarian <command> [options]
+
+COMMANDS:
+    status              Show current librarian status and index health
+    query <intent>      Run a query against the knowledge base
+    bootstrap           Initialize or refresh the knowledge index
+    inspect <module>    Inspect a module or function's knowledge
+    confidence <entity> Show confidence scores for an entity
+    validate <file>     Validate constraints for a file
+    check-providers     Check provider availability and authentication
+    visualize           Generate codebase visualizations
+    coverage            Generate UC x method x scenario coverage audit
+    health              Show current Librarian health status
+    heal                Run homeostatic healing loop until healthy
+    evolve              Run evolutionary improvement loop
+    eval                Produce FitnessReport.v1 for current state
+    replay              Replay an evolution cycle or variant
+    watch               Watch for file changes and auto-reindex
+    compose             Compile technique bundles from intent
+    index --force <file...>  Incrementally index specific files
+    help [command]      Show help for a command
+
+GLOBAL OPTIONS:
+    -h, --help          Show help information
+    -v, --version       Show version information
+    -w, --workspace     Set workspace directory (default: current directory)
+    --verbose           Enable verbose output
+
+EXAMPLES:
+    librarian status
+    librarian query "How does authentication work?"
+    librarian bootstrap --force
+    librarian bootstrap --force-resume
+    librarian inspect src/auth/login.ts
+    librarian validate src/api/handler.ts
+    librarian compose "Prepare a release plan" --limit 1
+
+For more information on a specific command, run:
+    librarian help <command>
+`,
+
+  status: `
+librarian status - Show current librarian status and index health
+
+USAGE:
+    librarian status [options]
+
+OPTIONS:
+    --verbose           Show detailed statistics
+
+DESCRIPTION:
+    Displays the current state of the librarian knowledge index, including:
+    - Bootstrap status and version
+    - Number of indexed files, functions, and modules
+    - Context pack statistics
+    - Provider availability
+    - Index health indicators
+
+EXAMPLES:
+    librarian status
+    librarian status --verbose
+`,
+
+  query: `
+librarian query - Run a query against the knowledge base
+
+USAGE:
+    librarian query "<intent>" [options]
+
+OPTIONS:
+    --depth <level>     Query depth: L0 (shallow), L1 (default), L2 (deep), L3 (comprehensive)
+    --files <paths>     Comma-separated list of affected files
+    --no-synthesis      Disable LLM synthesis/method hints (retrieval only)
+    --llm-provider <p>  Override LLM provider for synthesis: claude | codex (default: stored bootstrap setting or env)
+    --llm-model <id>    Override LLM model id for synthesis (default: stored bootstrap setting or env)
+    --uc <ids>          Comma-separated UC IDs (e.g., UC-041,UC-042)
+    --uc-priority <p>   UC priority: low|medium|high
+    --uc-evidence <n>   Evidence threshold (0.0-1.0)
+    --uc-freshness-days <n>  Max staleness in days
+    --json              Output results as JSON
+
+DESCRIPTION:
+    Queries the librarian knowledge base for context packs matching your intent.
+    The intent should describe what you want to understand or accomplish.
+
+    Depth levels:
+    - L0: Quick lookup, cached results preferred
+    - L1: Standard search with semantic matching (default)
+    - L2: Deep search including graph analysis and community expansion
+    - L3: Comprehensive search including patterns, decisions, and similar tasks
+
+EXAMPLES:
+    librarian query "How does authentication work?"
+    librarian query "Find error handling patterns" --depth L2
+    librarian query "Show prior related tasks" --depth L3
+    librarian query "What tests cover login?" --files src/auth/login.ts
+    librarian query "Assess impact" --uc UC-041,UC-042 --uc-priority high
+    librarian query "API endpoint structure" --json
+`,
+
+  bootstrap: `
+librarian bootstrap - Initialize or refresh the knowledge index
+
+USAGE:
+    librarian bootstrap [options]
+
+OPTIONS:
+    --force             Force full reindex even if data exists
+    --force-resume      Resume bootstrap even if workspace fingerprint changed
+    --scope <name>      Bootstrap scope: full | librarian (default: full)
+    --mode <name>       Bootstrap mode: fast | full (default: fast)
+    --llm-provider <p>  Force LLM provider: claude | codex (default: auto)
+    --llm-model <id>    Force LLM model id (default: daily selection)
+
+DESCRIPTION:
+    Initializes the librarian knowledge index by:
+    1. Scanning the workspace directory structure
+    2. Indexing all code files (functions, modules, exports)
+    3. Generating embeddings for semantic search
+    4. Building relationship graphs (imports, calls)
+    5. Creating pre-computed context packs
+
+    This command MUST complete before any agent work can proceed.
+    It automatically detects and upgrades older librarian data.
+
+PROGRESS INDICATORS:
+    The bootstrap process shows real-time progress with:
+    - Current phase name and description
+    - Progress percentage
+    - Estimated time remaining
+    - Files processed count
+
+EXAMPLES:
+    librarian bootstrap
+    librarian bootstrap --force
+    librarian bootstrap --force-resume
+    librarian bootstrap --scope librarian
+    librarian bootstrap --scope librarian --llm-provider codex --llm-model gpt-4o-mini
+`,
+
+  inspect: `
+librarian inspect - Inspect a module or function's knowledge
+
+USAGE:
+    librarian inspect <path-or-name> [options]
+
+OPTIONS:
+    --type <type>       Entity type: function, module, or auto (default)
+    --json              Output results as JSON
+
+DESCRIPTION:
+    Shows detailed knowledge about a specific module or function, including:
+    - Purpose and summary
+    - Exports and dependencies
+    - Related files
+    - Confidence score
+    - Access statistics
+    - Related context packs
+
+EXAMPLES:
+    librarian inspect src/auth/login.ts
+    librarian inspect loginUser --type function
+    librarian inspect src/api/handlers/ --json
+`,
+
+  compose: `
+librarian compose - Compile technique bundles from intent
+
+USAGE:
+    librarian compose "<intent>" [options]
+
+OPTIONS:
+    --limit <n>         Limit number of bundles returned
+    --include-primitives  Include primitive definitions in output
+    --pretty            Pretty-print JSON output
+
+DESCRIPTION:
+    Compiles technique composition bundles from an intent using the plan compiler.
+    Outputs JSON for downstream automation or inspection.
+
+EXAMPLES:
+    librarian compose "Prepare a release plan"
+    librarian compose "Performance regression triage" --limit 2
+    librarian compose "Release readiness" --include-primitives --pretty
+`,
+
+  confidence: `
+librarian confidence - Show confidence scores for an entity
+
+USAGE:
+    librarian confidence <entity-id> [options]
+
+OPTIONS:
+    --history           Show confidence history over time
+    --json              Output results as JSON
+
+DESCRIPTION:
+    Displays confidence scoring information for a knowledge entity, including:
+    - Current confidence score (0.0 - 1.0)
+    - Calibration status
+    - Uncertainty metrics
+    - Outcome history (successes/failures)
+    - Access count
+
+    Confidence scores indicate how reliable the knowledge is:
+    - 0.9+: High confidence, validated by outcomes
+    - 0.7-0.9: Good confidence, some validation
+    - 0.5-0.7: Moderate confidence, needs more validation
+    - <0.5: Low confidence, treat with caution
+
+EXAMPLES:
+    librarian confidence function:loginUser:src/auth/login.ts
+    librarian confidence module:src/api/handlers.ts --history
+`,
+
+  validate: `
+librarian validate - Validate constraints for a file
+
+USAGE:
+    librarian validate <file-path> [options]
+
+OPTIONS:
+    --before <content>  Previous file content (for change validation)
+    --after <content>   New file content (for change validation)
+    --json              Output results as JSON
+
+DESCRIPTION:
+    Validates a file against architectural constraints, including:
+    - Explicit constraints from .librarian/constraints.yaml
+    - Inferred layer boundary constraints
+    - Pattern-based constraints (no console.log, no test imports)
+
+    Returns:
+    - Blocking violations (errors)
+    - Non-blocking warnings
+    - Suggestions for resolution
+
+EXAMPLES:
+    librarian validate src/api/handler.ts
+    librarian coverage
+    librarian coverage --output state/audits/librarian/coverage/custom.json --strict
+    librarian validate src/auth/login.ts --json
+`,
+
+  coverage: `
+librarian coverage - Generate UC x method x scenario coverage audit
+
+USAGE:
+    librarian coverage [options]
+
+OPTIONS:
+    --output <path>     Output path for coverage matrix JSON
+    --strict            Fail if any UC/method/scenario entry is missing PASS
+
+DESCRIPTION:
+    Generates the UC × method × scenario matrix required by validation.
+    The report is written to state/audits/librarian/coverage/.
+
+EXAMPLES:
+    librarian coverage
+    librarian coverage --output state/audits/librarian/coverage/custom.json --strict
+`,
+
+  'check-providers': `
+librarian check-providers - Check provider availability and authentication
+
+USAGE:
+    librarian check-providers [options]
+
+OPTIONS:
+    --json              Output results as JSON
+
+DESCRIPTION:
+    Checks the availability and authentication status of:
+    - LLM providers (Claude, Codex)
+    - Embedding providers
+
+    Shows:
+    - Provider status (available/unavailable)
+    - Model ID being used
+    - Authentication status
+    - Latency measurements
+    - Remediation steps if unavailable
+
+EXAMPLES:
+    librarian check-providers
+    librarian check-providers --json
+`,
+
+  watch: `
+librarian watch - Watch for file changes and auto-reindex
+
+USAGE:
+    librarian watch [options]
+
+OPTIONS:
+    --debounce <ms>     Debounce interval in milliseconds (default: 200)
+    --quiet             Suppress output except errors
+
+DESCRIPTION:
+    Starts a file watcher that automatically reindexes changed files,
+    keeping the librarian knowledge base up-to-date as you code.
+
+    The watcher will:
+    - Detect file changes in real-time
+    - Debounce rapid changes (configurable)
+    - Automatically reindex changed .ts, .js, .py, .go, .rs files
+    - Update embeddings, context packs, and relationships
+    - Log all indexing activity
+
+    Press Ctrl+C to stop the watcher.
+
+EXAMPLES:
+    librarian watch
+    librarian watch --debounce 500
+    librarian watch --quiet
+`,
+
+  health: `
+librarian health - Show current Librarian health status
+
+USAGE:
+    librarian health [options]
+
+OPTIONS:
+    --verbose           Show detailed health metrics
+    --format <fmt>      Output format: text | json | prometheus (default: text)
+
+DESCRIPTION:
+    Shows the current health status of the Librarian system, including:
+    - Overall health score
+    - Individual health dimensions
+    - Active issues and warnings
+    - Recommended actions
+
+EXAMPLES:
+    librarian health
+    librarian health --verbose
+    librarian health --format json
+`,
+
+  heal: `
+librarian heal - Run homeostatic healing loop until healthy
+
+USAGE:
+    librarian heal [options]
+
+OPTIONS:
+    --max-cycles <N>    Maximum healing cycles (default: 10)
+    --budget-tokens <N> Token budget per cycle
+    --dry-run           Show what would be healed without making changes
+
+DESCRIPTION:
+    Runs automated healing to restore Librarian health, including:
+    - Fixing stale or invalid data
+    - Rebuilding broken relationships
+    - Refreshing embeddings
+    - Resolving detected issues
+
+EXAMPLES:
+    librarian heal
+    librarian heal --max-cycles 5
+    librarian heal --dry-run
+`,
+
+  evolve: `
+librarian evolve - Run evolutionary improvement loop
+
+USAGE:
+    librarian evolve [options]
+
+OPTIONS:
+    --cycles <N>        Number of evolution cycles (default: 1)
+    --candidates <N>    Number of candidates per cycle (default: 3)
+    --dry-run           Show what would evolve without making changes
+    --format <fmt>      Output format: text | json (default: text)
+
+DESCRIPTION:
+    Runs evolutionary improvement to enhance Librarian quality, including:
+    - Generating improvement candidates
+    - Evaluating candidates against fitness criteria
+    - Selecting and applying best improvements
+    - Recording outcomes for learning
+
+EXAMPLES:
+    librarian evolve
+    librarian evolve --cycles 3 --candidates 5
+    librarian evolve --dry-run
+`,
+
+  eval: `
+librarian eval - Produce FitnessReport.v1 for current state
+
+USAGE:
+    librarian eval [options]
+
+OPTIONS:
+    --output <path>     Output path for the report
+    --save-baseline     Save as baseline for future comparisons
+    --stages <range>    Evaluation stages to run: 0-4 (default: 0-4)
+    --format <fmt>      Output format: text | json (default: text)
+
+DESCRIPTION:
+    Evaluates the current Librarian state and produces a fitness report:
+    - Stage 0: Basic structural checks
+    - Stage 1: Semantic quality metrics
+    - Stage 2: Relationship integrity
+    - Stage 3: Coverage analysis
+    - Stage 4: Performance benchmarks
+
+EXAMPLES:
+    librarian eval
+    librarian eval --save-baseline
+    librarian eval --stages 0-2 --format json
+`,
+
+  replay: `
+librarian replay - Replay an evolution cycle or variant for analysis
+
+USAGE:
+    librarian replay <cycle-id|variant-id> [options]
+
+OPTIONS:
+    --verbose           Show detailed replay information
+    --format <fmt>      Output format: text | json (default: text)
+
+DESCRIPTION:
+    Replays a previous evolution cycle or variant for analysis:
+    - Shows what changes were made
+    - Displays fitness scores before/after
+    - Explains selection decisions
+    - Useful for debugging evolution issues
+
+EXAMPLES:
+    librarian replay cycle-2025-01-18-001
+    librarian replay variant-abc123 --verbose
+`,
+
+  index: `
+librarian index - Incrementally index specific files
+
+USAGE:
+    librarian index --force <file...> [options]
+
+OPTIONS:
+    --force             REQUIRED. Acknowledge risk of context pack loss on failure
+    --verbose           Show detailed indexing output
+
+DESCRIPTION:
+    Indexes specific files without requiring a full bootstrap.
+    Use this when:
+    - You've added new files that haven't been indexed yet
+    - You want to update the index for specific files
+    - AutoWatch isn't running and you want targeted updates
+
+    The index command calls reindexFiles() internally, which:
+    - Updates or creates knowledge entries for the specified files
+    - Generates embeddings for semantic search
+    - Updates relationship graphs
+    - Invalidates and rebuilds affected context packs
+
+    Unlike bootstrap, this command:
+    - Only processes the specified files
+    - Does NOT overwrite the entire database
+    - Is much faster for targeted updates
+
+    CAUTION: Context packs are invalidated BEFORE reindexing. If indexing
+    fails mid-operation, context packs for target files will be PERMANENTLY
+    LOST. Recovery requires running 'librarian bootstrap' to regenerate.
+    The --force flag is required to acknowledge this risk.
+
+EXAMPLES:
+    librarian index --force src/new_feature.ts
+    librarian index --force src/auth/*.ts --verbose
+    librarian index --force file1.ts file2.ts file3.ts
+`,
+};
+
+export function showHelp(command?: string): void {
+  if (command && command in HELP_TEXT) {
+    console.log(HELP_TEXT[command as keyof typeof HELP_TEXT]);
+  } else if (command) {
+    console.log(`Unknown command: ${command}`);
+    console.log(HELP_TEXT.main);
+  } else {
+    console.log(HELP_TEXT.main);
+  }
+}
+
+export function getCommandHelp(command: string): string {
+  return HELP_TEXT[command as keyof typeof HELP_TEXT] || HELP_TEXT.main;
+}

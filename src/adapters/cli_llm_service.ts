@@ -1,0 +1,379 @@
+import { execa } from 'execa';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { logInfo, logWarning } from '../telemetry/logger.js';
+import type { LlmChatOptions, LlmProviderHealth, LlmServiceFactory } from './llm_service.js';
+import { resolveCodexCliOptions } from './codex_cli.js';
+
+type GovernorContextLike = { checkBudget: () => void; recordTokens: (tokens: number) => void; recordRetry?: () => void };
+
+type ChatResult = { content: string; provider: string };
+
+type CliProvider = 'claude' | 'codex';
+
+type HealthState = {
+  claude: LlmProviderHealth;
+  codex: LlmProviderHealth;
+};
+
+class AsyncSemaphore {
+  private active = 0;
+  private queue: Array<() => void> = [];
+
+  constructor(private max: number) {
+    if (!Number.isFinite(this.max) || this.max <= 0) {
+      this.max = 1;
+    }
+  }
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) {
+      await new Promise<void>((resolve) => this.queue.push(resolve));
+    }
+    this.active += 1;
+    try {
+      return await task();
+    } finally {
+      this.active -= 1;
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
+const claudeSemaphore = new AsyncSemaphore(Number.parseInt(process.env.CLAUDE_MAX_CONCURRENT || '2', 10));
+const codexSemaphore = new AsyncSemaphore(Number.parseInt(process.env.CODEX_MAX_CONCURRENT || '2', 10));
+
+function coerceTimeout(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
+function buildFullPrompt(messages: LlmChatOptions['messages']): string {
+  const parts: string[] = [];
+  for (const message of messages) {
+    if (message.role === 'system') continue;
+    if (message.role === 'user') {
+      parts.push(message.content);
+    } else {
+      parts.push(`[Previous Response]\n${message.content}`);
+    }
+  }
+  return parts.join('\n\n');
+}
+
+function extractSystemPrompt(messages: LlmChatOptions['messages']): string | null {
+  const systems = messages.filter((message) => message.role === 'system');
+  if (systems.length === 0) return null;
+  return systems.map((message) => message.content).join('\n\n');
+}
+
+function estimateTokenCount(text: string): number {
+  const trimmed = String(text ?? '').trim();
+  return trimmed ? Math.max(1, Math.ceil(trimmed.length / 4)) : 1;
+}
+
+function withCliPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const home = process.env.HOME || '';
+  const prefix = home ? path.join(home, '.local', 'bin') : '';
+  if (!prefix) return env;
+  const currentPath = env.PATH ?? '';
+  const parts = currentPath.split(path.delimiter).filter(Boolean);
+  if (parts.includes(prefix)) return env;
+  return { ...env, PATH: `${prefix}${path.delimiter}${currentPath}` };
+}
+
+function coerceGovernorContext(value: unknown): GovernorContextLike | null {
+  const candidate = value as GovernorContextLike | null;
+  return candidate && typeof candidate.checkBudget === 'function' && typeof candidate.recordTokens === 'function'
+    ? candidate
+    : null;
+}
+
+function buildInitialHealth(provider: CliProvider): LlmProviderHealth {
+  return {
+    provider,
+    available: false,
+    authenticated: false,
+    lastCheck: 0,
+  };
+}
+
+export class CliLlmService {
+  private claudeTimeoutMs = coerceTimeout(process.env.CLAUDE_TIMEOUT_MS, 0);
+  private codexTimeoutMs = coerceTimeout(process.env.CODEX_TIMEOUT_MS, 0);
+  private claudeHealthCheckTimeoutMs = coerceTimeout(process.env.CLAUDE_HEALTH_CHECK_TIMEOUT_MS, 60000);
+  private codexHealthCheckTimeoutMs = coerceTimeout(process.env.CODEX_HEALTH_CHECK_TIMEOUT_MS, 20000);
+  private healthCheckIntervalMs = coerceTimeout(process.env.LLM_HEALTH_CHECK_INTERVAL_MS, 60000);
+
+  private health: HealthState = {
+    claude: buildInitialHealth('claude'),
+    codex: buildInitialHealth('codex'),
+  };
+
+  async chat(options: LlmChatOptions): Promise<ChatResult> {
+    const provider: CliProvider = options.provider === 'codex' ? 'codex' : 'claude';
+    if (provider === 'codex') {
+      return this.callCodex(options);
+    }
+    return this.callClaude(options);
+  }
+
+  async checkClaudeHealth(forceCheck = false): Promise<LlmProviderHealth> {
+    const now = Date.now();
+    const cached = this.health.claude;
+    if (!forceCheck && cached.lastCheck && now - cached.lastCheck < this.healthCheckIntervalMs) {
+      return cached;
+    }
+
+    const env = withCliPath({ ...process.env });
+    const version = await execa('claude', ['--version'], { env, timeout: 5000, reject: false });
+    if (version.exitCode !== 0) {
+      this.health.claude = {
+        provider: 'claude',
+        available: false,
+        authenticated: false,
+        lastCheck: now,
+        error: 'Claude CLI not available',
+      };
+      return this.health.claude;
+    }
+
+    const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    const configPath = path.join(configDir, '.claude.json');
+    const hasConfig = fs.existsSync(configPath);
+    if (!hasConfig) {
+      this.health.claude = {
+        provider: 'claude',
+        available: true,
+        authenticated: false,
+        lastCheck: now,
+        error: 'Claude CLI not authenticated - run "claude setup-token" or start "claude" once',
+      };
+      return this.health.claude;
+    }
+
+    if (forceCheck) {
+      const probe = await execa('claude', ['--print', 'ok'], {
+        env,
+        timeout: this.claudeHealthCheckTimeoutMs || undefined,
+        reject: false,
+      });
+      if (probe.exitCode !== 0) {
+        this.health.claude = {
+          provider: 'claude',
+          available: true,
+          authenticated: false,
+          lastCheck: now,
+          error: String(probe.stderr || probe.stdout || 'Claude CLI probe failed'),
+        };
+        return this.health.claude;
+      }
+    }
+
+    this.health.claude = {
+      provider: 'claude',
+      available: true,
+      authenticated: true,
+      lastCheck: now,
+    };
+    return this.health.claude;
+  }
+
+  async checkCodexHealth(forceCheck = false): Promise<LlmProviderHealth> {
+    const now = Date.now();
+    const cached = this.health.codex;
+    if (!forceCheck && cached.lastCheck && now - cached.lastCheck < this.healthCheckIntervalMs) {
+      return cached;
+    }
+
+    const env = withCliPath({ ...process.env });
+    const version = await execa('codex', ['--version'], { env, timeout: 5000, reject: false });
+    if (version.exitCode !== 0) {
+      this.health.codex = {
+        provider: 'codex',
+        available: false,
+        authenticated: false,
+        lastCheck: now,
+        error: 'Codex CLI not available',
+      };
+      return this.health.codex;
+    }
+
+    const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+    if (!fs.existsSync(codexHome)) {
+      this.health.codex = {
+        provider: 'codex',
+        available: true,
+        authenticated: false,
+        lastCheck: now,
+        error: 'Codex CLI not authenticated - run "codex login"',
+      };
+      return this.health.codex;
+    }
+
+    const status = await execa('codex', ['login', 'status'], { env, timeout: 5000, reject: false });
+    if (status.exitCode !== 0) {
+      this.health.codex = {
+        provider: 'codex',
+        available: true,
+        authenticated: false,
+        lastCheck: now,
+        error: String(status.stderr || status.stdout || 'Codex CLI not authenticated'),
+      };
+      return this.health.codex;
+    }
+
+    if (forceCheck) {
+      const resolution = resolveCodexCliOptions(process.env.CODEX_MODEL);
+      const args = ['exec'];
+      if (resolution.model) args.push('--model', resolution.model);
+      for (const override of resolution.configOverrides) {
+        args.push('-c', override);
+      }
+      args.push('-');
+      const probe = await execa('codex', args, {
+        env,
+        input: 'ok',
+        timeout: this.codexHealthCheckTimeoutMs || undefined,
+        reject: false,
+      });
+      if (probe.exitCode !== 0) {
+        this.health.codex = {
+          provider: 'codex',
+          available: true,
+          authenticated: false,
+          lastCheck: now,
+          error: String(probe.stderr || probe.stdout || 'Codex CLI probe failed'),
+        };
+        return this.health.codex;
+      }
+    }
+
+    this.health.codex = {
+      provider: 'codex',
+      available: true,
+      authenticated: true,
+      lastCheck: now,
+    };
+    return this.health.codex;
+  }
+
+  private async callClaude(options: LlmChatOptions): Promise<ChatResult> {
+    const fullPrompt = buildFullPrompt(options.messages);
+    const systemPrompt = extractSystemPrompt(options.messages);
+    const governor = coerceGovernorContext(options.governorContext);
+    if (governor) {
+      governor.checkBudget();
+      governor.recordTokens(estimateTokenCount(fullPrompt) + estimateTokenCount(systemPrompt ?? ''));
+    }
+
+    return claudeSemaphore.run(async () => {
+      const args = ['--print'];
+      if (systemPrompt) {
+        args.push('--system-prompt', systemPrompt);
+      }
+      const env = withCliPath({ ...process.env });
+      if (options.modelId) {
+        env.CLAUDE_MODEL = options.modelId;
+      }
+      logInfo('CLI LLM: claude call', { promptLength: fullPrompt.length });
+      const result = await execa('claude', args, {
+        input: fullPrompt,
+        env,
+        timeout: this.claudeTimeoutMs > 0 ? this.claudeTimeoutMs : undefined,
+        reject: false,
+      });
+      if (result.exitCode !== 0) {
+        const errorMsg = String(result.stderr || result.stdout || 'Claude CLI error');
+        logWarning('CLI LLM: Claude call failed', { error: errorMsg });
+        throw new Error(`unverified_by_trace(llm_execution_failed): ${errorMsg}`);
+      }
+      const content = String(result.stdout ?? '');
+      if (governor) {
+        governor.recordTokens(estimateTokenCount(content));
+      }
+      return { provider: 'claude', content };
+    });
+  }
+
+  private async callCodex(options: LlmChatOptions): Promise<ChatResult> {
+    const fullPrompt = buildFullPrompt(options.messages);
+    const governor = coerceGovernorContext(options.governorContext);
+    if (governor) {
+      governor.checkBudget();
+      governor.recordTokens(estimateTokenCount(fullPrompt));
+    }
+
+    return codexSemaphore.run(async () => {
+      const args = ['exec'];
+      const profile = process.env.CODEX_PROFILE || undefined;
+      if (profile) {
+        args.push('--profile', profile);
+      }
+      if (options.disableTools) {
+        args.push('--disable', 'shell_tool', '--disable', 'shell_snapshot');
+      }
+
+      let tempDir: string | null = null;
+      let outputPath: string | null = null;
+      try {
+        if (options.outputSchema) {
+          tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'librarian-codex-'));
+          const schemaPath = path.join(tempDir, 'output_schema.json');
+          outputPath = path.join(tempDir, 'last_message.txt');
+          await fs.promises.writeFile(schemaPath, options.outputSchema, 'utf8');
+          args.push('--output-schema', schemaPath, '--output-last-message', outputPath);
+        }
+
+        const resolution = resolveCodexCliOptions(options.modelId);
+        if (resolution.model) {
+          args.push('--model', resolution.model);
+        }
+        for (const override of resolution.configOverrides) {
+          args.push('-c', override);
+        }
+
+        args.push('-');
+        logInfo('CLI LLM: codex call', { promptLength: fullPrompt.length });
+        const result = await execa('codex', args, {
+          input: fullPrompt,
+          env: withCliPath({ ...process.env }),
+          timeout: this.codexTimeoutMs > 0 ? this.codexTimeoutMs : undefined,
+          reject: false,
+        });
+
+        if (result.exitCode !== 0) {
+          const errorMsg = String(result.stderr || result.stdout || 'Codex CLI error');
+          logWarning('CLI LLM: Codex call failed', { error: errorMsg });
+          throw new Error(`unverified_by_trace(llm_execution_failed): ${errorMsg}`);
+        }
+
+        let content = String(result.stdout ?? '');
+        if (outputPath) {
+          try {
+            content = await fs.promises.readFile(outputPath, 'utf8');
+          } catch (error) {
+            logWarning('CLI LLM: Codex output file missing, using stdout', { error: String(error) });
+          }
+        }
+
+        if (governor) {
+          governor.recordTokens(estimateTokenCount(content));
+        }
+
+        return { provider: 'codex', content };
+      } finally {
+        if (tempDir) {
+          await fs.promises.rm(tempDir, { recursive: true, force: true });
+        }
+      }
+    });
+  }
+}
+
+export function createCliLlmServiceFactory(): LlmServiceFactory {
+  return async () => new CliLlmService();
+}

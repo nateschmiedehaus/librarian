@@ -1,0 +1,144 @@
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { statusCommand } from '../status.js';
+import { resolveDbPath } from '../../db_path.js';
+import { createSqliteStorage } from '../../../storage/sqlite_storage.js';
+import { isBootstrapRequired, getBootstrapStatus } from '../../../api/bootstrap.js';
+import { getIndexState } from '../../../state/index_state.js';
+import { checkAllProviders } from '../../../api/provider_check.js';
+import { getWatchState } from '../../../state/watch_state.js';
+import { printKeyValue } from '../../progress.js';
+import type { LibrarianStorage } from '../../../storage/types.js';
+
+vi.mock('../../db_path.js', () => ({
+  resolveDbPath: vi.fn(),
+}));
+vi.mock('../../../storage/sqlite_storage.js', () => ({
+  createSqliteStorage: vi.fn(),
+}));
+vi.mock('../../../api/bootstrap.js', () => ({
+  isBootstrapRequired: vi.fn(),
+  getBootstrapStatus: vi.fn(),
+}));
+vi.mock('../../../state/index_state.js', () => ({
+  getIndexState: vi.fn(),
+}));
+vi.mock('../../../api/provider_check.js', () => ({
+  checkAllProviders: vi.fn(),
+}));
+vi.mock('../../../state/watch_state.js', () => ({
+  getWatchState: vi.fn(),
+}));
+vi.mock('../../progress.js', async () => {
+  const actual = await vi.importActual('../../progress.js');
+  return {
+    ...actual,
+    printKeyValue: vi.fn(),
+  };
+});
+
+describe('statusCommand', () => {
+  const workspace = '/test/workspace';
+
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let mockStorage: {
+    initialize: Mock;
+    close: Mock;
+    getLastBootstrapReport: Mock;
+    getStats: Mock;
+    getMetadata: Mock;
+    getState: Mock;
+    getContextPacks: Mock;
+    getFunctions: Mock;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    mockStorage = {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getLastBootstrapReport: vi.fn().mockResolvedValue(null),
+      getStats: vi.fn().mockResolvedValue({
+        totalFunctions: 1,
+        totalModules: 1,
+        totalContextPacks: 1,
+        totalEmbeddings: 0,
+        storageSizeBytes: 10,
+        averageConfidence: 0.5,
+        cacheHitRate: 0.1,
+      }),
+      getMetadata: vi.fn().mockResolvedValue(null),
+      getState: vi.fn().mockResolvedValue(null),
+      getContextPacks: vi.fn().mockResolvedValue([]),
+      getFunctions: vi.fn().mockResolvedValue([]),
+    };
+
+    vi.mocked(resolveDbPath).mockResolvedValue('/tmp/librarian.sqlite');
+    vi.mocked(createSqliteStorage).mockReturnValue(mockStorage as unknown as LibrarianStorage);
+    vi.mocked(isBootstrapRequired).mockResolvedValue({ required: false, reason: 'ok' });
+    vi.mocked(getBootstrapStatus).mockReturnValue({
+      status: 'not_started',
+      currentPhase: null,
+      progress: 0,
+      startedAt: null,
+      completedAt: null,
+    });
+    vi.mocked(getIndexState).mockResolvedValue({
+      phase: 'ready',
+      lastFullIndex: new Date('2026-01-19T00:00:00.000Z').toISOString(),
+      progress: undefined,
+    });
+    vi.mocked(checkAllProviders).mockResolvedValue({
+      llm: { available: true, provider: 'claude', model: 'test-model', latencyMs: 120 },
+      embedding: { available: true, provider: 'xenova', model: 'test-embed', latencyMs: 50 },
+    });
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+  });
+
+  it('prints watch state when available', async () => {
+    vi.mocked(getWatchState).mockResolvedValue({
+      schema_version: 1,
+      workspace_root: workspace,
+      watch_started_at: '2026-01-19T01:00:00.000Z',
+      watch_last_heartbeat_at: '2026-01-19T01:05:00.000Z',
+      watch_last_event_at: '2026-01-19T01:06:00.000Z',
+      watch_last_reindex_ok_at: '2026-01-19T01:07:00.000Z',
+      suspected_dead: false,
+      needs_catchup: false,
+      storage_attached: true,
+      updated_at: '2026-01-19T01:07:30.000Z',
+      effective_config: {
+        debounceMs: 200,
+        cascadeReindex: true,
+        cascadeDelayMs: 2000,
+        cascadeBatchSize: 5,
+        excludes: ['.librarian/', 'state/audits/'],
+      },
+    });
+
+    await statusCommand({ workspace, verbose: false });
+
+    const calls = vi.mocked(printKeyValue).mock.calls;
+    const watchCall = calls.find((call) => call[0].some((entry) => entry.key === 'Watch Started'));
+    expect(watchCall).toBeTruthy();
+    const configCall = calls.find((call) => call[0].some((entry) => entry.key === 'Watch Debounce (ms)'));
+    expect(configCall).toBeTruthy();
+    const healthCall = calls.find((call) => call[0].some((entry) => entry.key === 'Derived Suspected Dead'));
+    expect(healthCall).toBeTruthy();
+    expect(vi.mocked(getWatchState)).toHaveBeenCalledWith(mockStorage);
+  });
+
+  it('prints placeholder when watch state is missing', async () => {
+    vi.mocked(getWatchState).mockResolvedValue(null);
+
+    await statusCommand({ workspace, verbose: false });
+
+    const calls = vi.mocked(printKeyValue).mock.calls;
+    const watchCall = calls.find((call) => call[0].some((entry) => entry.key === 'Watch Status'));
+    expect(watchCall).toBeTruthy();
+  });
+});

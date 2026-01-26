@@ -1,0 +1,148 @@
+{
+  "name": "@wave0/librarian",
+  "version": "0.1.0",
+  "description": "The knowledge layer for agentic software development - semantic code understanding, quality detection, and best practices for AI coding agents",
+  "author": "Nate Schmiedehaus",
+  "license": "MIT",
+  "homepage": "https://github.com/wave0-ai/librarian#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wave0-ai/librarian.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wave0-ai/librarian/issues"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "code-understanding",
+    "semantic-search",
+    "code-quality",
+    "best-practices",
+    "mcp",
+    "llm",
+    "developer-tools",
+    "static-analysis",
+    "knowledge-graph",
+    "codebase-indexing"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "librarian": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./api": {
+      "import": "./dist/api/index.js",
+      "types": "./dist/api/index.d.ts"
+    },
+    "./quality": {
+      "import": "./dist/quality/index.js",
+      "types": "./dist/quality/index.d.ts"
+    },
+    "./storage": {
+      "import": "./dist/storage/index.js",
+      "types": "./dist/storage/index.d.ts"
+    },
+    "./providers": {
+      "import": "./dist/providers/index.js",
+      "types": "./dist/providers/index.d.ts"
+    },
+    "./cli": {
+      "import": "./dist/cli/index.js",
+      "types": "./dist/cli/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "mkdir -p dist/migrations && cp -r src/migrations/*.sql dist/migrations/",
+    "build:watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "test:watch": "vitest --watch",
+    "lint": "eslint src/ --ext .ts",
+    "lint:fix": "eslint src/ --ext .ts --fix",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write 'src/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts'",
+    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "release": "npm run build && npm publish --access public"
+  },
+  "dependencies": {
+    "glob": "^11.0.0",
+    "minimatch": "^10.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
+    "ora": "^8.0.0",
+    "table": "^6.8.0",
+    "cli-progress": "^3.12.0",
+    "strip-json-comments": "^5.0.0",
+    "yaml": "^2.4.0",
+    "zod": "^3.23.0",
+    "proper-lockfile": "^4.1.2",
+    "execa": "^9.0.0"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0",
+    "@modelcontextprotocol/sdk": ">=1.0.0",
+    "better-sqlite3": ">=11.0.0",
+    "openai": ">=4.0.0",
+    "ts-morph": ">=24.0.0",
+    "tree-sitter": ">=0.21.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    },
+    "openai": {
+      "optional": true
+    },
+    "ts-morph": {
+      "optional": true
+    },
+    "tree-sitter": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/cli-progress": "^3.11.0",
+    "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0",
+    "@vitest/coverage-v8": "^2.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

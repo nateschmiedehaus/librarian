@@ -1,0 +1,422 @@
+/**
+ * @fileoverview JSON Schema definitions and Zod validators for MCP Tool Inputs
+ *
+ * Provides JSON Schema Draft-07 compatible schemas for all MCP tool inputs.
+ * Uses Zod for runtime validation (project standard) with JSON Schema for documentation.
+ *
+ * @packageDocumentation
+ */
+
+import { z } from 'zod';
+
+// ============================================================================
+// SCHEMA VERSION
+// ============================================================================
+
+export const SCHEMA_VERSION = '1.0.0';
+export const JSON_SCHEMA_DRAFT = 'http://json-schema.org/draft-07/schema#';
+
+// ============================================================================
+// ZOD SCHEMAS
+// ============================================================================
+
+/** Query intent types */
+export const QueryIntentSchema = z.enum([
+  'understand', 'debug', 'refactor', 'impact', 'security', 'test', 'document', 'navigate', 'general'
+]);
+
+/** Context depth levels */
+export const DepthSchema = z.enum(['L0', 'L1', 'L2', 'L3']);
+
+/** LLM provider options */
+export const LLMProviderSchema = z.enum(['claude', 'codex']);
+
+/** Export format options */
+export const ExportFormatSchema = z.enum(['json', 'sqlite', 'scip', 'lsif']);
+
+/** Audit type options */
+export const AuditTypeSchema = z.enum(['full', 'claims', 'coverage', 'security', 'freshness']);
+
+/** Bundle type options */
+export const BundleTypeSchema = z.enum(['minimal', 'standard', 'comprehensive']);
+
+/**
+ * Bootstrap tool input schema
+ */
+export const BootstrapToolInputSchema = z.object({
+  workspace: z.string().min(1).describe('Absolute path to the workspace to bootstrap'),
+  force: z.boolean().optional().default(false).describe('Force re-index even if cached data exists'),
+  include: z.array(z.string()).optional().describe('Glob patterns for files to include'),
+  exclude: z.array(z.string()).optional().describe('Glob patterns for files to exclude'),
+  llmProvider: LLMProviderSchema.optional().describe('Preferred LLM provider for semantic analysis'),
+  maxFiles: z.number().int().positive().optional().describe('Maximum files to index (for testing)'),
+  fileTimeoutMs: z.number().int().min(0).optional().describe('Per-file timeout in ms (0 disables)'),
+  fileTimeoutRetries: z.number().int().min(0).optional().describe('Retries per file on timeout'),
+  fileTimeoutPolicy: z.enum(['skip', 'retry', 'fail']).optional().describe('Policy after file timeout retries'),
+}).strict();
+
+/**
+ * Query tool input schema
+ */
+export const QueryToolInputSchema = z.object({
+  intent: z.string().min(1).max(2000).describe('The query intent or question'),
+  workspace: z.string().optional().describe('Workspace path (optional, uses first ready workspace if not specified)'),
+  intentType: QueryIntentSchema.optional().describe('Typed query intent for routing optimization'),
+  affectedFiles: z.array(z.string()).optional().describe('File paths to scope the query to'),
+  minConfidence: z.number().min(0).max(1).optional().default(0.5).describe('Minimum confidence threshold (0-1)'),
+  depth: DepthSchema.optional().default('L1').describe('Depth of context to retrieve'),
+  includeEngines: z.boolean().optional().default(false).describe('Include engine results in response'),
+  includeEvidence: z.boolean().optional().default(false).describe('Include evidence graph summary'),
+}).strict();
+
+/**
+ * Verify claim tool input schema
+ */
+export const VerifyClaimToolInputSchema = z.object({
+  claimId: z.string().min(1).describe('ID of the claim to verify'),
+  force: z.boolean().optional().default(false).describe('Force re-verification even if recently verified'),
+}).strict();
+
+/**
+ * Run audit tool input schema
+ */
+export const RunAuditToolInputSchema = z.object({
+  type: AuditTypeSchema.describe('Type of audit to perform'),
+  scope: z.array(z.string()).optional().describe('File paths or patterns to scope the audit'),
+  generateReport: z.boolean().optional().default(true).describe('Generate a detailed audit report'),
+}).strict();
+
+/**
+ * Diff runs tool input schema
+ */
+export const DiffRunsToolInputSchema = z.object({
+  runIdA: z.string().min(1).describe('ID of the first run'),
+  runIdB: z.string().min(1).describe('ID of the second run'),
+  detailed: z.boolean().optional().default(false).describe('Include detailed diff information'),
+}).strict();
+
+/**
+ * Export index tool input schema
+ */
+export const ExportIndexToolInputSchema = z.object({
+  format: ExportFormatSchema.describe('Export format'),
+  outputPath: z.string().min(1).describe('Path to write the export'),
+  includeEmbeddings: z.boolean().optional().default(false).describe('Include embedding vectors in export'),
+  scope: z.array(z.string()).optional().describe('File patterns to scope the export'),
+}).strict();
+
+/**
+ * Get context pack bundle tool input schema
+ */
+export const GetContextPackBundleToolInputSchema = z.object({
+  entityIds: z.array(z.string()).min(1).describe('Entity IDs to bundle context for'),
+  bundleType: BundleTypeSchema.optional().default('standard').describe('Type of bundle to create'),
+  maxTokens: z.number().int().min(100).max(100000).optional().describe('Maximum token budget for the bundle'),
+}).strict();
+
+/**
+ * List verification plans tool input schema
+ */
+export const ListVerificationPlansToolInputSchema = z.object({
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+  limit: z.number().int().positive().optional().describe('Limit number of plans returned'),
+}).strict().default({});
+
+/**
+ * List episodes tool input schema
+ */
+export const ListEpisodesToolInputSchema = z.object({
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+  limit: z.number().int().positive().optional().describe('Limit number of episodes returned'),
+}).strict().default({});
+
+/**
+ * List technique primitives tool input schema
+ */
+export const ListTechniquePrimitivesToolInputSchema = z.object({
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+  limit: z.number().int().positive().optional().describe('Limit number of primitives returned'),
+}).strict().default({});
+
+/**
+ * List technique compositions tool input schema
+ */
+export const ListTechniqueCompositionsToolInputSchema = z.object({
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+  limit: z.number().int().positive().optional().describe('Limit number of compositions returned'),
+}).strict().default({});
+
+/**
+ * Select technique compositions tool input schema
+ */
+export const SelectTechniqueCompositionsToolInputSchema = z.object({
+  intent: z.string().min(1).describe('Intent or goal to select compositions for'),
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+  limit: z.number().int().positive().optional().describe('Limit number of compositions returned'),
+}).strict();
+
+/**
+ * Compile technique composition tool input schema
+ */
+export const CompileTechniqueCompositionToolInputSchema = z.object({
+  compositionId: z.string().min(1).describe('Technique composition ID to compile'),
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+  includePrimitives: z.boolean().optional().describe('Include primitive definitions in output'),
+}).strict();
+
+/**
+ * Compile intent bundles tool input schema
+ */
+export const CompileIntentBundlesToolInputSchema = z.object({
+  intent: z.string().min(1).describe('Intent to compile into technique bundles'),
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+  limit: z.number().int().positive().optional().describe('Limit number of bundles returned'),
+  includePrimitives: z.boolean().optional().describe('Include primitive definitions in output'),
+}).strict();
+
+/**
+ * System contract tool input schema
+ */
+export const SystemContractToolInputSchema = z.object({
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+}).strict();
+
+/**
+ * Diagnose self tool input schema
+ */
+export const DiagnoseSelfToolInputSchema = z.object({
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+}).strict();
+
+/**
+ * Status tool input schema
+ */
+export const StatusToolInputSchema = z.object({
+  workspace: z.string().optional().describe('Workspace path (optional, uses first available if not specified)'),
+}).strict();
+
+// ============================================================================
+// TYPE EXPORTS
+// ============================================================================
+
+export type BootstrapToolInputType = z.infer<typeof BootstrapToolInputSchema>;
+export type QueryToolInputType = z.infer<typeof QueryToolInputSchema>;
+export type VerifyClaimToolInputType = z.infer<typeof VerifyClaimToolInputSchema>;
+export type RunAuditToolInputType = z.infer<typeof RunAuditToolInputSchema>;
+export type DiffRunsToolInputType = z.infer<typeof DiffRunsToolInputSchema>;
+export type ExportIndexToolInputType = z.infer<typeof ExportIndexToolInputSchema>;
+export type GetContextPackBundleToolInputType = z.infer<typeof GetContextPackBundleToolInputSchema>;
+export type ListVerificationPlansToolInputType = z.infer<typeof ListVerificationPlansToolInputSchema>;
+export type ListEpisodesToolInputType = z.infer<typeof ListEpisodesToolInputSchema>;
+export type ListTechniquePrimitivesToolInputType = z.infer<typeof ListTechniquePrimitivesToolInputSchema>;
+export type ListTechniqueCompositionsToolInputType = z.infer<typeof ListTechniqueCompositionsToolInputSchema>;
+export type SelectTechniqueCompositionsToolInputType = z.infer<typeof SelectTechniqueCompositionsToolInputSchema>;
+export type CompileTechniqueCompositionToolInputType = z.infer<typeof CompileTechniqueCompositionToolInputSchema>;
+export type CompileIntentBundlesToolInputType = z.infer<typeof CompileIntentBundlesToolInputSchema>;
+export type SystemContractToolInputType = z.infer<typeof SystemContractToolInputSchema>;
+export type DiagnoseSelfToolInputType = z.infer<typeof DiagnoseSelfToolInputSchema>;
+export type StatusToolInputType = z.infer<typeof StatusToolInputSchema>;
+
+// ============================================================================
+// SCHEMA REGISTRY
+// ============================================================================
+
+/** All tool input schemas (Zod) */
+export const TOOL_INPUT_SCHEMAS = {
+  bootstrap: BootstrapToolInputSchema,
+  system_contract: SystemContractToolInputSchema,
+  diagnose_self: DiagnoseSelfToolInputSchema,
+  status: StatusToolInputSchema,
+  query: QueryToolInputSchema,
+  verify_claim: VerifyClaimToolInputSchema,
+  run_audit: RunAuditToolInputSchema,
+  diff_runs: DiffRunsToolInputSchema,
+  export_index: ExportIndexToolInputSchema,
+  get_context_pack_bundle: GetContextPackBundleToolInputSchema,
+  list_verification_plans: ListVerificationPlansToolInputSchema,
+  list_episodes: ListEpisodesToolInputSchema,
+  list_technique_primitives: ListTechniquePrimitivesToolInputSchema,
+  list_technique_compositions: ListTechniqueCompositionsToolInputSchema,
+  select_technique_compositions: SelectTechniqueCompositionsToolInputSchema,
+  compile_technique_composition: CompileTechniqueCompositionToolInputSchema,
+  compile_intent_bundles: CompileIntentBundlesToolInputSchema,
+} as const;
+
+export type ToolName = keyof typeof TOOL_INPUT_SCHEMAS;
+
+// ============================================================================
+// JSON SCHEMA REPRESENTATIONS
+// ============================================================================
+
+/** JSON Schema type definition (simplified for docs) */
+export interface JSONSchema {
+  $schema?: string;
+  $id?: string;
+  title?: string;
+  description?: string;
+  type: string;
+  properties?: Record<string, JSONSchemaProperty>;
+  required?: string[];
+  additionalProperties?: boolean;
+}
+
+export interface JSONSchemaProperty {
+  type: string;
+  description?: string;
+  enum?: string[];
+  items?: { type: string };
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  minItems?: number;
+  default?: unknown;
+}
+
+/** Bootstrap tool JSON Schema */
+export const bootstrapToolJsonSchema: JSONSchema = {
+  $schema: JSON_SCHEMA_DRAFT,
+  $id: 'librarian://schemas/bootstrap-tool-input',
+  title: 'BootstrapToolInput',
+  description: 'Input for the bootstrap tool - indexes a workspace',
+  type: 'object',
+  properties: {
+    workspace: { type: 'string', description: 'Absolute path to the workspace to bootstrap', minLength: 1 },
+    force: { type: 'boolean', description: 'Force re-index even if cached data exists', default: false },
+    include: { type: 'array', items: { type: 'string' }, description: 'Glob patterns for files to include' },
+    exclude: { type: 'array', items: { type: 'string' }, description: 'Glob patterns for files to exclude' },
+    llmProvider: { type: 'string', enum: ['claude', 'codex'], description: 'Preferred LLM provider' },
+    maxFiles: { type: 'number', description: 'Maximum files to index', minimum: 1 },
+    fileTimeoutMs: { type: 'number', description: 'Per-file timeout in ms (0 disables)', minimum: 0 },
+    fileTimeoutRetries: { type: 'number', description: 'Retries per file on timeout', minimum: 0 },
+    fileTimeoutPolicy: { type: 'string', enum: ['skip', 'retry', 'fail'], description: 'Policy after file timeout retries' },
+  },
+  required: ['workspace'],
+  additionalProperties: false,
+};
+
+/** Query tool JSON Schema */
+export const queryToolJsonSchema: JSONSchema = {
+  $schema: JSON_SCHEMA_DRAFT,
+  $id: 'librarian://schemas/query-tool-input',
+  title: 'QueryToolInput',
+  description: 'Input for the query tool - searches indexed knowledge',
+  type: 'object',
+  properties: {
+    intent: { type: 'string', description: 'The query intent or question', minLength: 1, maxLength: 2000 },
+    intentType: { type: 'string', enum: ['understand', 'debug', 'refactor', 'impact', 'security', 'test', 'document', 'navigate', 'general'], description: 'Typed query intent' },
+    affectedFiles: { type: 'array', items: { type: 'string' }, description: 'File paths to scope the query to' },
+    minConfidence: { type: 'number', description: 'Minimum confidence threshold', minimum: 0, maximum: 1, default: 0.5 },
+    depth: { type: 'string', enum: ['L0', 'L1', 'L2', 'L3'], description: 'Depth of context', default: 'L1' },
+    includeEngines: { type: 'boolean', description: 'Include engine results', default: false },
+    includeEvidence: { type: 'boolean', description: 'Include evidence graph summary', default: false },
+  },
+  required: ['intent'],
+  additionalProperties: false,
+};
+
+/** All JSON schemas */
+export const JSON_SCHEMAS: Record<string, JSONSchema> = {
+  bootstrap: bootstrapToolJsonSchema,
+  query: queryToolJsonSchema,
+};
+
+// ============================================================================
+// VALIDATION UTILITIES
+// ============================================================================
+
+/**
+ * Validation result
+ */
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  data?: unknown;
+}
+
+export interface ValidationError {
+  path: string;
+  message: string;
+  code: string;
+}
+
+/**
+ * Validate tool input against schema
+ */
+export function validateToolInput(
+  toolName: string,
+  input: unknown
+): ValidationResult {
+  const schema = TOOL_INPUT_SCHEMAS[toolName as ToolName];
+  if (!schema) {
+    return {
+      valid: false,
+      errors: [{
+        path: '',
+        message: `Unknown tool: ${toolName}`,
+        code: 'unknown_tool',
+      }],
+    };
+  }
+
+  const result = schema.safeParse(input);
+
+  if (result.success) {
+    return {
+      valid: true,
+      errors: [],
+      data: result.data,
+    };
+  }
+
+  const errors: ValidationError[] = result.error.errors.map((err) => ({
+    path: err.path.join('.') || '/',
+    message: err.message,
+    code: err.code,
+  }));
+
+  return { valid: false, errors };
+}
+
+/**
+ * Get Zod schema for a tool
+ */
+export function getToolSchema(toolName: string): z.ZodSchema | undefined {
+  return TOOL_INPUT_SCHEMAS[toolName as ToolName];
+}
+
+/**
+ * Get JSON Schema for a tool
+ */
+export function getToolJsonSchema(toolName: string): JSONSchema | undefined {
+  return JSON_SCHEMAS[toolName];
+}
+
+/**
+ * List all available tool schemas
+ */
+export function listToolSchemas(): string[] {
+  return Object.keys(TOOL_INPUT_SCHEMAS);
+}
+
+/**
+ * Parse and validate tool input, returning typed result
+ */
+export function parseToolInput<T extends ToolName>(
+  toolName: T,
+  input: unknown
+): z.infer<typeof TOOL_INPUT_SCHEMAS[T]> {
+  const schema = TOOL_INPUT_SCHEMAS[toolName];
+  return schema.parse(input);
+}
+
+/**
+ * Safely parse tool input, returning result or null
+ */
+export function safeParseToolInput<T extends ToolName>(
+  toolName: T,
+  input: unknown
+): z.SafeParseReturnType<unknown, z.infer<typeof TOOL_INPUT_SCHEMAS[T]>> {
+  const schema = TOOL_INPUT_SCHEMAS[toolName];
+  return schema.safeParse(input);
+}

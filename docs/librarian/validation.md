@@ -1,0 +1,230 @@
+# Librarian Validation
+
+Status: partial
+Scope: deterministic gates, agentic audits, evidence requirements.
+Last Verified: 2026-01-04
+Owner: librarianship
+Evidence: docs only (implementation evidence lives in STATUS.md)
+
+## Validation Principles
+- No theater: tests must observe real behavior.
+- Deterministic gates for CI safety.
+- Agentic tests for semantic coverage.
+- Fail closed when providers are unavailable.
+
+## Evidence Gates
+Tier 0 (deterministic):
+- `npm run test:tier0`
+- Schema migrations, storage integrity, index determinism
+
+Tier 1 (integration):
+- End-to-end ingest -> knowledge -> query for a real repo
+- Provider check enforced
+- Librarian directory bootstrap executed
+
+Tier 2 (agentic):
+- `npm run test:agentic-review`
+- Fails with `unverified_by_trace` when providers unavailable
+
+## Smoke Test Definition
+- Must execute a real bootstrap (ingest -> embeddings -> knowledge -> query).
+- Uses live providers; fails closed if providers are unavailable.
+- Scope may be small, but the full pipeline must run and return evidence.
+- Smoke test is a full bootstrap, not a shallow or mocked run.
+
+## Librarian Directory Bootstrap (Required)
+- Bootstraps the repository itself to validate indexing, understanding, and
+  query paths against a live codebase.
+- Produces an audit pack in `state/audits/` with traces and model selection.
+- Use `npm run librarian -- bootstrap --scope librarian --mode fast --llm-provider codex --llm-model gpt-5.1-codex-mini` for a focused run.
+
+## Deterministic vs Live Runs
+- Tier 0 uses deterministic mode and must never call live providers.
+- Tier 1 and Tier 2 require live providers and fail closed if unavailable.
+
+## Integration Test Checklist (Minimum)
+- Bootstrap completes with live providers and writes audit artifacts.
+- Query returns evidence with confidence and defeaters for core scenarios.
+- Provider gate blocks runs when providers are unavailable.
+- Model selection audit is created for the run date.
+- New language detection produces fallback knowledge with explicit gaps.
+
+## Required Test Categories
+- Indexing: entity counts, relations, freshness invalidation
+- Knowledge construction: claims require evidence, confidence calibration
+- Query pipeline: normalization, locking, engine composition
+- Understanding layer: purpose/mechanism/contract generation
+- Security: provider gating, no API key usage
+- Embedding pipeline: chunking, retrieval, reranking
+- Model policy: daily selection + audit logging
+- Language onboarding: adapter selection, fallback extraction, reindex on upgrade
+- LLM understanding: semantic outputs use LLM synthesis, not heuristics
+
+## Edge Case Test Set (Required)
+- Symlink loops and cyclic directories (must not hang).
+- Binary/large files (must not crash; metadata-only indexing).
+- Vendor/generated directories (respect excludes, document gaps).
+- Partial clones or missing submodules (emit GapReport).
+- Repos without tests or docs (gaps explicitly surfaced).
+- Mixed-language file with unknown extension (onboarding fallback).
+- Provider outage mid-run (fail closed with unverified_by_trace).
+- Model policy drift (detected and logged in audit).
+
+## Validation Matrix (Minimum)
+| Area | Deterministic | Integration | Agentic |
+| --- | --- | --- | --- |
+| Ingestion | Schema + counts | Bootstrap -> query | Live provider run |
+| Query | Pipeline step checks | Context assembly | Scenario prompts |
+| Understanding | Schema validation | Evidence trace | LLM narrative check |
+| Safety | Provider gate | CLI auth | Slop detection |
+
+## UC × Method × Scenario Coverage Audit (Required)
+This audit is explicit: every UC must be validated against at least one
+method family and one scenario, and the full UC × method × scenario grid
+must be recorded with pass/fail outcomes.
+
+Requirements:
+- Generate a full matrix for all UC IDs × method families × scenario IDs.
+- Each cell is PASS/FAIL with evidence links (or unverified_by_trace).
+- Store the matrix as an audit artifact:
+  `state/audits/librarian/coverage/uc_method_scenario_matrix.json` (or .csv).
+- Fail the audit if any UC lacks a PASS entry for a method family + scenario.
+- Use `librarian coverage --strict` to generate and enforce this matrix.
+
+Template (excerpt; full matrix required in audit artifact):
+| UC IDs | Method Families | Scenario IDs | Pass/Fail | Evidence |
+| --- | --- | --- | --- | --- |
+| UC-001 | MF-01 | S-ONBOARD-001 | PASS | state/audits/... |
+| UC-041 | MF-03 | S-CHANGE-IMPACT-001 | FAIL | unverified_by_trace(...) |
+
+## Scenario Validation
+Each high-priority scenario in `docs/librarian/scenarios.md` must have:
+- A reproducible prompt
+- Expected response structure
+- Evidence trace links
+- Confidence calibration expectations
+
+## Confidence Validation
+- Calibrate against known truth sets.
+- Track false positive/negative rates by domain.
+- Store calibration curves in audits.
+
+## Acceptance Criteria
+- All Tier 0 tests pass.
+- Tier 1 integration shows working end-to-end knowledge flow.
+- Tier 2 agentic review produces evidence-backed reports.
+
+## Reference Test Hooks
+- Bootstrap integration tests (self-index + partial Wave0 index).
+- Query accuracy tests for known entities.
+- Event bus wiring tests (ingest/query/feedback).
+
+## Audit Artifacts
+- Store reports in `state/audits/` with timestamps.
+- Any missing evidence must be labeled unverified.
+- Model selection logs live in `state/audits/model_selection/`.
+
+---
+
+## Librarian-Specific Test Categories (Agentic Testing Philosophy)
+
+> **Test the librarian like instrumentation: calibration, drift, noise sensitivity, and provenance.**
+
+### Category 1: Fidelity Tests (Calibration)
+
+The librarian must correctly represent the codebase. These are deterministic invariants.
+
+| Test Type | What It Validates | Oracle |
+|-----------|-------------------|--------|
+| **Idempotency** | Same repo revision indexed twice → identical results | Diff comparison |
+| **Symbol resolution** | Symbol → correct definition location | Language server ground truth |
+| **Dependency graph** | Import/module graph matches reality | Build system extraction |
+| **Entity counts** | Extracted entities match AST count | AST parser count |
+| **Schema versioning** | Index version is explicit and traceable | Version field present |
+
+**Pass criterion**: All diffs are fully explainable; no silent divergence.
+
+### Category 2: Retrieval Quality Tests (Precision/Recall)
+
+The librarian must surface the right evidence. These require evaluation datasets.
+
+| Metric | What It Measures | Target |
+|--------|------------------|--------|
+| **Fix-localization Recall@k** | Does top-k include the true failing file for a bug? | ≥ 70% at k=5 |
+| **Change-impact Recall@k** | Does top-k include downstream call sites/tests? | ≥ 60% at k=10 |
+| **Convention Recall@k** | Does top-k include project ADRs/style guides? | ≥ 50% at k=5 |
+| **Precision@k** | What fraction of top-k is relevant? | ≥ 40% |
+| **nDCG** | Ranking quality (higher = relevant items ranked first) | ≥ 0.6 |
+
+**Evaluation dataset requirement**: Curated set of (query, relevant_files) pairs.
+
+### Category 3: Provenance Tests (Justification)
+
+Every claim must be traceable to evidence. These are epistemic hygiene tests.
+
+| Test Type | What It Validates | Pass Criterion |
+|-----------|-------------------|----------------|
+| **Claim anchoring** | Every factual claim → file path + line range | 100% anchored |
+| **Quote accuracy** | Every quote → verbatim in source | 100% match |
+| **Symbol existence** | Every referenced symbol → exists in revision | 100% resolvable |
+| **Confidence calibration** | Stated confidence → empirical accuracy | Within 10% error |
+| **Contradiction surfacing** | Conflicting sources → flagged as conflict | Never silent arbitration |
+
+**Pass criterion**: No unanchored claims; no fabricated quotes.
+
+### Category 4: Robustness Tests (Adversarial)
+
+The librarian must handle adversarial and edge-case inputs safely.
+
+| Test Type | Injection Vector | Expected Behavior |
+|-----------|------------------|-------------------|
+| **Prompt injection** | Malicious README/doc comment | Label as untrusted content |
+| **Instruction injection** | Test file with redirect instructions | Surface provenance; don't follow |
+| **Corrupted files** | Binary masquerading as source | Graceful skip with warning |
+| **Symlink loops** | Circular directory structure | Detect and break loop |
+| **Huge files** | 100MB+ single file | Metadata-only indexing |
+| **Rate limit** | Provider returns 429 | Backoff and retry with `unverified_by_trace` |
+
+**Pass criterion**: No crashes; no blind instruction following; explicit warnings.
+
+---
+
+## Performance SLOs (Non-Functional)
+
+A librarian that's correct but slow, or correct but stale, is wrong in production.
+
+| SLO | Metric | Target | Measurement |
+|-----|--------|--------|-------------|
+| **Bootstrap latency** | Time to index 10k-file repo | < 5 minutes | Timer |
+| **Query latency p50** | 50th percentile query time | < 500ms | Histogram |
+| **Query latency p99** | 99th percentile query time | < 2s | Histogram |
+| **Index freshness** | Lag after commit | < 5 minutes | Staleness detector |
+| **Cache hit rate** | % of queries served from cache | > 60% | Counter |
+| **Memory footprint** | Peak memory during bootstrap | < 2GB | Profiler |
+
+---
+
+## Closed-Loop Tests (Librarian + Agent)
+
+Test the coupled system, not just the organs.
+
+### Ablation Tests
+
+Run same episodes with librarian: fully enabled, degraded, disabled.
+
+| Condition | Expected Outcome |
+|-----------|------------------|
+| Full librarian | Best performance baseline |
+| Degraded (no symbol graph) | Performance drop, but functional |
+| Disabled | Significant performance drop |
+| Decorative librarian | Performance unchanged → **FAIL** (librarian adds no value) |
+
+### Counterfactual Retrieval Tests
+
+| Intervention | Expected Behavior |
+|--------------|-------------------|
+| Omit top-1 relevant file | Agent detects gap and explores |
+| Inject plausible-but-wrong context | Agent detects inconsistency |
+| Provide contradictory sources | Agent surfaces contradiction |
+
+**Pass criterion**: Agent doesn't blindly trust; recovers from bad retrieval.

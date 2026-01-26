@@ -1,0 +1,126 @@
+/**
+ * @fileoverview Health Command
+ *
+ * Shows current Librarian health status using the observability module.
+ *
+ * Usage: librarian health [--verbose]
+ *
+ * @packageDocumentation
+ */
+
+import * as path from 'node:path';
+import { resolveDbPath } from '../db_path.js';
+import { createSqliteStorage } from '../../storage/sqlite_storage.js';
+import {
+  generateStateReport,
+  exportPrometheusMetrics,
+  type LibrarianStateReport,
+} from '../../measurement/observability.js';
+
+interface HealthOptions {
+  workspace: string;
+  verbose?: boolean;
+  format?: 'text' | 'json' | 'prometheus';
+}
+
+export async function healthCommand(options: HealthOptions): Promise<void> {
+  const { workspace, verbose = false, format = 'text' } = options;
+
+  // Initialize storage
+  const dbPath = await resolveDbPath(workspace);
+  const storage = createSqliteStorage(dbPath, workspace);
+  await storage.initialize();
+
+  try {
+    // Generate state report
+    const report = await generateStateReport(storage);
+
+    // Output based on format
+    switch (format) {
+      case 'json':
+        console.log(JSON.stringify(report, null, 2));
+        break;
+
+      case 'prometheus':
+        console.log(exportPrometheusMetrics(report));
+        break;
+
+      case 'text':
+      default:
+        printTextReport(report, verbose);
+        break;
+    }
+
+    // Exit code based on health
+    if (report.health.status === 'unhealthy') {
+      process.exitCode = 1;
+    }
+  } finally {
+    await storage.close();
+  }
+}
+
+function printTextReport(report: LibrarianStateReport, verbose: boolean): void {
+  const statusEmoji: Record<string, string> = {
+    healthy: '\u2705',
+    degraded: '\u26A0\uFE0F',
+    recovering: '\u23F3',
+    unhealthy: '\u274C',
+  };
+
+  console.log('\n=== Librarian Health Report ===\n');
+  console.log(`Status: ${statusEmoji[report.health.status] ?? '\u2753'} ${report.health.status.toUpperCase()}`);
+  console.log(`Recovery State: ${report.recoveryState}`);
+  console.log(`Generated: ${report.generatedAt}\n`);
+
+  // Health checks
+  console.log('Health Checks:');
+  console.log(`  Index Fresh: ${report.health.checks.indexFresh ? '\u2705' : '\u274C'}`);
+  console.log(`  Confidence OK: ${report.health.checks.confidenceAcceptable ? '\u2705' : '\u274C'}`);
+  console.log(`  Defeaters Low: ${report.health.checks.defeatersLow ? '\u2705' : '\u274C'}`);
+  console.log(`  Latency OK: ${report.health.checks.latencyAcceptable ? '\u2705' : '\u274C'}`);
+  console.log(`  Coverage OK: ${report.health.checks.coverageAcceptable ? '\u2705' : '\u274C'}`);
+
+  // Degradation reasons
+  if (report.health.degradationReasons.length > 0) {
+    console.log('\nDegradation Reasons:');
+    for (const reason of report.health.degradationReasons) {
+      console.log(`  - ${reason}`);
+    }
+  }
+
+  if (verbose) {
+    console.log('\n--- Code Graph Health ---');
+    console.log(`  Entities: ${report.codeGraphHealth.entityCount}`);
+    console.log(`  Relations: ${report.codeGraphHealth.relationCount}`);
+    console.log(`  Coverage: ${(report.codeGraphHealth.coverageRatio * 100).toFixed(1)}%`);
+    console.log(`  Orphans: ${report.codeGraphHealth.orphanEntities}`);
+
+    console.log('\n--- Index Freshness ---');
+    console.log(`  Last Index: ${report.indexFreshness.lastIndexTime ?? 'never'}`);
+    console.log(`  Staleness: ${formatDuration(report.indexFreshness.stalenessMs)}`);
+    console.log(`  Pending Changes: ${report.indexFreshness.pendingChanges}`);
+
+    console.log('\n--- Confidence State ---');
+    console.log(`  Mean Confidence: ${(report.confidenceState.meanConfidence * 100).toFixed(1)}%`);
+    console.log(`  Geometric Mean: ${(report.confidenceState.geometricMeanConfidence * 100).toFixed(1)}%`);
+    console.log(`  Low Confidence Count: ${report.confidenceState.lowConfidenceCount}`);
+    console.log(`  Defeaters: ${report.confidenceState.defeaterCount}`);
+
+    console.log('\n--- Query Performance ---');
+    console.log(`  P50 Latency: ${report.queryPerformance.queryLatencyP50}ms`);
+    console.log(`  P99 Latency: ${report.queryPerformance.queryLatencyP99}ms`);
+    console.log(`  Cache Hit Rate: ${(report.queryPerformance.cacheHitRate * 100).toFixed(1)}%`);
+    console.log(`  Query Count: ${report.queryPerformance.queryCount}`);
+  }
+
+  console.log('');
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 0) return 'unknown';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60 * 1000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60 * 60 * 1000) return `${(ms / (60 * 1000)).toFixed(1)}min`;
+  return `${(ms / (60 * 60 * 1000)).toFixed(1)}h`;
+}

@@ -215,6 +215,174 @@
       "currentState": "standalone repository",
       "targetState": "standalone repository",
       "dependsOn": ["layer1.standaloneTests"]
+    },
+
+    "layer5.evalCorpus": {
+      "name": "Ground Truth Evaluation Corpus",
+      "layer": 5,
+      "status": "not_started",
+      "target": "10 repos, 200+ query/answer pairs, adversarial cases",
+      "spec": "specs/track-eval-infrastructure.md#e1",
+      "dependsOn": ["layer4.verification"],
+      "note": "Required for any quality measurement"
+    },
+    "layer5.evalHarness": {
+      "name": "Automated Evaluation Harness",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Nightly eval with regression detection",
+      "spec": "specs/track-eval-infrastructure.md#e2",
+      "dependsOn": ["layer5.evalCorpus"]
+    },
+    "layer5.retrievalRecall": {
+      "name": "Retrieval Recall@5",
+      "layer": 5,
+      "status": "not_measured",
+      "target": ">= 80%",
+      "blocking": true,
+      "spec": "specs/track-eval-infrastructure.md#e2",
+      "dependsOn": ["layer5.evalHarness"]
+    },
+    "layer5.retrievalPrecision": {
+      "name": "Retrieval Precision@5",
+      "layer": 5,
+      "status": "not_measured",
+      "target": ">= 70%",
+      "blocking": false,
+      "spec": "specs/track-eval-infrastructure.md#e2",
+      "dependsOn": ["layer5.evalHarness"]
+    },
+    "layer5.hallucinationRate": {
+      "name": "Hallucination Rate",
+      "layer": 5,
+      "status": "not_measured",
+      "target": "< 5%",
+      "blocking": true,
+      "spec": "specs/track-eval-infrastructure.md#e2",
+      "dependsOn": ["layer5.evalHarness"]
+    },
+    "layer5.synthesisAccuracyStructural": {
+      "name": "Synthesis Accuracy (Structural)",
+      "layer": 5,
+      "status": "not_measured",
+      "target": ">= 70%",
+      "blocking": false,
+      "spec": "specs/track-eval-infrastructure.md#e2",
+      "dependsOn": ["layer5.evalHarness"]
+    },
+    "layer5.synthesisAccuracyBehavioral": {
+      "name": "Synthesis Accuracy (Behavioral)",
+      "layer": 5,
+      "status": "not_measured",
+      "target": ">= 60%",
+      "blocking": false,
+      "spec": "specs/track-eval-infrastructure.md#e2",
+      "dependsOn": ["layer5.evalHarness"]
+    },
+    "layer5.outcomeCollection": {
+      "name": "Outcome Collection Infrastructure",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Collection API + 1000+ outcomes",
+      "spec": "specs/track-eval-infrastructure.md#e3",
+      "dependsOn": ["layer5.evalHarness"]
+    },
+    "layer5.calibrationCurve": {
+      "name": "Calibration Curve Computation",
+      "layer": 5,
+      "status": "not_started",
+      "target": "ECE < 10%",
+      "spec": "specs/track-eval-infrastructure.md#e3",
+      "dependsOn": ["layer5.outcomeCollection"]
+    },
+    "layer5.codebaseProfiler": {
+      "name": "Codebase Profiler",
+      "layer": 5,
+      "status": "not_started",
+      "target": "Detect codebase characteristics for adaptive quality",
+      "spec": "specs/track-eval-infrastructure.md#e4",
+      "dependsOn": ["layer5.evalHarness"]
+    },
+    "layer5.qualityParity": {
+      "name": "Quality Parity Across Codebase Types",
+      "layer": 5,
+      "status": "not_measured",
+      "target": "Worst within 25% of best",
+      "spec": "specs/track-eval-infrastructure.md#e4",
+      "dependsOn": ["layer5.codebaseProfiler"]
+    },
+
+    "layer6.deadCodeDetection": {
+      "name": "Dead Code Detection",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Filter dead code from retrieval",
+      "spec": "specs/track-research-hard-problems.md#h3.2",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Engineering-achievable"
+    },
+    "layer6.redFlagDetection": {
+      "name": "Red Flag Detection",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Confidence adjustment for red flags",
+      "spec": "specs/track-research-hard-problems.md#h3.3",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Engineering-achievable"
+    },
+    "layer6.citationValidation": {
+      "name": "Citation Validation",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Verify cited code exists and supports claim",
+      "spec": "specs/track-research-hard-problems.md#h1.3",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Engineering-achievable"
+    },
+    "layer6.iterativeRetrieval": {
+      "name": "Iterative Retrieval with Convergence",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Multi-step retrieval with convergence detection",
+      "spec": "specs/track-research-hard-problems.md#h2.2",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Applied research"
+    },
+    "layer6.commentCodeChecker": {
+      "name": "Comment/Code Disagreement Detection",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Detect misleading comments",
+      "spec": "specs/track-research-hard-problems.md#h3.1",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Applied research"
+    },
+    "layer6.consistencyChecker": {
+      "name": "Multi-Query Consistency Checking",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Check consistency across variant queries",
+      "spec": "specs/track-research-hard-problems.md#h4.1",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Applied research"
+    },
+    "layer6.entailmentChecker": {
+      "name": "Entailment-Based Grounding (MiniCheck-style)",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Verify claims against evidence",
+      "spec": "specs/track-research-hard-problems.md#h1.2",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Applied research - requires training data"
+    },
+    "layer6.graphRetrieval": {
+      "name": "Graph-Based Code Retrieval",
+      "layer": 6,
+      "status": "not_started",
+      "target": "Dependency/call graph traversal for retrieval",
+      "spec": "specs/track-research-hard-problems.md#h2.3",
+      "dependsOn": ["layer5.evalHarness"],
+      "note": "Applied research"
     }
   },
 
@@ -224,6 +392,7 @@
     "layer2": { "total": 4, "pass": 3, "partial": 1, "not_implemented": 0 },
     "layer3": { "total": 34, "implemented_unverified": 25, "not_implemented": 8, "partial": 1 },
     "layer4": { "total": 1, "pending": 1 },
-    "layer5": { "total": 0 }
+    "layer5": { "total": 11, "not_started": 5, "not_measured": 6 },
+    "layer6": { "total": 8, "not_started": 8 }
   }
 }

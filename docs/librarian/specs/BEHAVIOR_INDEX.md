@@ -445,3 +445,33 @@ If `Status:` is `executable`, the entry MUST also include:
 - Status: research_only
 - Used for: reference material; future exploration only.
 - Behavior: reference-only.
+
+---
+
+## Evaluation & Quality Infrastructure
+
+### `docs/librarian/specs/track-eval-infrastructure.md`
+- Status: design (infrastructure not built)
+- Used for: measuring and verifying Librarian quality against ground truth; enables improvement.
+- Behavior (profiles): All profiles; quality must be measured across R0–R4, W0–W3, codebase types.
+- Edge cases: E1 empty corpus must fail explicitly; E4 missing annotations must be disclosed; adversarial repos must stress-test hallucination detection.
+- Key behaviors:
+  - **Ground truth corpus**: Annotated repos with known-correct query/answer pairs.
+  - **Evaluation harness**: Automated quality measurement (retrieval recall/precision, hallucination rate, synthesis accuracy).
+  - **Outcome collection**: Claim→outcome tracking for calibration data.
+  - **Quality parity**: Adaptive strategies to reduce quality variance across codebase types.
+- Verification: `src/eval/__tests__/` test suite (when built); nightly eval CI job; quality gates in GATES.json.
+- Research sources: SWE-bench, MiniCheck, Ragas, DependEval (see spec for full citations).
+
+### `docs/librarian/specs/track-research-hard-problems.md`
+- Status: research (not engineering)
+- Used for: addressing genuinely hard problems that require research investment.
+- Behavior (profiles): Variable; these are experimental.
+- Key behaviors:
+  - **H1 Semantic verification**: Test-based verification for pure functions; entailment checking; citation validation.
+  - **H2 Cross-file reasoning**: Hierarchical summarization; iterative retrieval with convergence; graph-based retrieval.
+  - **H3 Adversarial robustness**: Comment/code disagreement detection; dead code filtering; red flag detection.
+  - **H4 Consistency checking**: Multi-query consistency; temporal consistency; cross-reference validation.
+- Verification: Research experiments; ablation studies; A/B tests against baseline.
+- Honest assessment: Some items achievable (dead code, red flags), some require applied research (entailment), some are long-term (temporal consistency).
+- Research sources: MiniCheck, LLM-Cite, GraphCoder, ReDeEP (see spec for full citations).

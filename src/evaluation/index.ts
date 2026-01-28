@@ -810,3 +810,27 @@ export {
   // Factory
   createCodePropertyGraphBuilder,
 } from './code_property_graph.js';
+
+export {
+  // Types
+  type UncertaintyType,
+  type UncertaintySignal,
+  type RetrievalDecision as DRAGINRetrievalDecision,
+  type ActiveRetrievalResult,
+  type DynamicRetrievalResult,
+  type DRAGINConfig,
+
+  // Constants
+  DEFAULT_DRAGIN_CONFIG,
+
+  // Functions
+  computeUncertaintySignals,
+  detectRetrievalNeed,
+  triggerDynamicRetrieval,
+
+  // Class
+  DRAGINRetriever,
+
+  // Factory
+  createDRAGINRetriever,
+} from './active_retrieval.js';

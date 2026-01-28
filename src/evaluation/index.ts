@@ -834,3 +834,27 @@ export {
   // Factory
   createDRAGINRetriever,
 } from './active_retrieval.js';
+
+export {
+  // Types
+  type BugCategory,
+  type BugDifficulty,
+  type BugLocation,
+  type BugInjection,
+  type BugInjectorConfig,
+  type InjectionManifest,
+  type CorpusItem,
+  type InjectionStats,
+
+  // Class
+  BugInjector,
+
+  // Standalone functions
+  injectBug,
+  injectRandomBug,
+  describeBug,
+  revertBug,
+
+  // Factory
+  createBugInjector,
+} from './bug_injector.js';

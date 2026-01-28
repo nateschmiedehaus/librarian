@@ -2,7 +2,23 @@
 
 > **Purpose**: Map prior implementation attempts to the Librarian story chapters, showing what exists, what's broken, and what specs must address.
 > **Source**: THEORETICAL_CRITIQUE.md work logs, hole registry, and problem tracking
-> **Updated**: 2026-01-22
+> **Updated**: 2026-01-26
+
+---
+
+## ⚠️ CURRENT STATUS: VALIDATION PENDING
+
+**Infrastructure (Phases 0-11)**: ✅ COMPLETE
+- ~3,500+ unit tests passing
+- All core components implemented
+- Scientific Loop agents built
+- Quality Parity components built
+- 7 real external repos cloned
+
+**Validation (Phases 12-22)**: ⏳ NOT STARTED
+- 57 work units pending
+- Key metrics NOT measured (Recall@5, Hallucination Rate, ECE, A/B Lift)
+- See `CODEX_ORCHESTRATOR.md` for full validation plan
 
 ---
 

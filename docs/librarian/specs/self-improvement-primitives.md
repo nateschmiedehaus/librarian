@@ -2296,6 +2296,123 @@ interface ComponentHealth {
   details: string;
 }
 
+/**
+ * =============================================================================
+ * HEALTH SCORE COMPUTATION FORMULA
+ * =============================================================================
+ *
+ * The overall health score is computed as a WEIGHTED GEOMETRIC MEAN of component
+ * scores, with a MINIMUM FLOOR applied to prevent any single critical failure
+ * from being masked.
+ *
+ * Formula:
+ * --------
+ *
+ *   overallScore = min(
+ *     geometricMean(w_i * s_i),     // Weighted geometric mean of components
+ *     min(s_i) + FLOOR_PENALTY       // Floor based on worst component
+ *   )
+ *
+ * Where:
+ *   s_i = component score (0.0 to 1.0)
+ *   w_i = component weight (sum to 1.0)
+ *   FLOOR_PENALTY = 0.1  // Worst component + 10% is the ceiling
+ *
+ * Component Weights (default):
+ * ----------------------------
+ *   indexFreshness:     0.25  // Knowledge staleness
+ *   calibrationQuality: 0.30  // Confidence accuracy (most important)
+ *   consistencyCheck:   0.25  // Internal consistency
+ *   performanceMetrics: 0.20  // Response times, error rates
+ *
+ * Why Geometric Mean?
+ * -------------------
+ * - Penalizes imbalance more than arithmetic mean
+ * - A score of 0 in any component pulls overall to 0
+ * - Encourages balanced improvement across all dimensions
+ * - Example: [1.0, 1.0, 1.0, 0.5] -> 0.84 (arithmetic would give 0.875)
+ *
+ * Why Minimum Floor?
+ * ------------------
+ * - Prevents masking of critical failures
+ * - If one component is 0.3, overall cannot exceed 0.4 regardless of others
+ * - Forces attention to the weakest component
+ *
+ * Status Thresholds:
+ * ------------------
+ *   healthy:   score >= 0.8
+ *   degraded:  0.5 <= score < 0.8
+ *   unhealthy: 0.2 <= score < 0.5
+ *   critical:  score < 0.2
+ *
+ * Implementation:
+ * ---------------
+ */
+function computeHealthScore(components: Record<string, ComponentHealth>): number {
+  const WEIGHTS: Record<string, number> = {
+    indexFreshness: 0.25,
+    calibrationQuality: 0.30,
+    consistencyCheck: 0.25,
+    performanceMetrics: 0.20,
+  };
+
+  const FLOOR_PENALTY = 0.1;
+
+  const scores = Object.entries(components).map(([name, health]) => ({
+    score: health.score,
+    weight: WEIGHTS[name] ?? 0.25, // Default weight if unknown component
+  }));
+
+  // Geometric mean: exp(sum(w_i * ln(s_i)))
+  // Handle zero scores specially to avoid -Infinity
+  const hasZero = scores.some(s => s.score === 0);
+  if (hasZero) {
+    return 0; // Any zero component means overall health is zero
+  }
+
+  const weightedLogSum = scores.reduce(
+    (sum, { score, weight }) => sum + weight * Math.log(score),
+    0
+  );
+  const geometricMean = Math.exp(weightedLogSum);
+
+  // Apply minimum floor
+  const minScore = Math.min(...scores.map(s => s.score));
+  const floorCeiling = minScore + FLOOR_PENALTY;
+
+  return Math.min(geometricMean, floorCeiling);
+}
+
+function computeHealthStatus(score: number): 'healthy' | 'degraded' | 'unhealthy' | 'critical' {
+  if (score >= 0.8) return 'healthy';
+  if (score >= 0.5) return 'degraded';
+  if (score >= 0.2) return 'unhealthy';
+  return 'critical';
+}
+
+/**
+ * Component Score Computation:
+ * ============================
+ *
+ * Each component score is computed from its specific metrics:
+ *
+ * indexFreshness:
+ *   score = 1 - (staleEntities / totalEntities) * stalePenalty
+ *   where stalePenalty = averageStaleness / MAX_STALENESS_DAYS
+ *
+ * calibrationQuality:
+ *   score = 1 - (ECE / TARGET_ECE)  // ECE = Expected Calibration Error
+ *   clamped to [0, 1]
+ *
+ * consistencyCheck:
+ *   score = 1 - (issueCount / totalClaims) * severityWeight
+ *   where severityWeight varies by issue type
+ *
+ * performanceMetrics:
+ *   score = (1 - errorRate) * (TARGET_LATENCY / actualLatency)
+ *   clamped to [0, 1]
+ */
+
 interface DetailedHealthMetrics {
   // Index Health
   index: {
@@ -2560,6 +2677,448 @@ const META_IMPROVEMENT_BOUNDS = {
 
   /** Dry-run required for first N cycles */
   INITIAL_DRY_RUN_CYCLES: 3,
+};
+```
+
+---
+
+## Theoretical Limitations
+
+### Lob's Theorem and Self-Verification Bounds
+
+Lob's theorem (a strengthening of Godel's incompleteness theorems) establishes fundamental limits on what a formal system can prove about itself. For Librarian's self-improvement primitives, this has concrete implications:
+
+**What Lob's Theorem Says:**
+If a system can prove "if I can prove P, then P is true" for any statement P, then the system can already prove P. Contrapositively: a consistent system cannot prove its own consistency.
+
+**Implications for Self-Verification:**
+
+| Claim Type | Can Self-Verify? | Why / Why Not |
+|------------|------------------|---------------|
+| **Syntactic claims** | Yes | "Function X has 3 parameters" - verified by AST parsing |
+| **Behavioral claims (with tests)** | Partially | Tests verify specific cases, not universal behavior |
+| **Correctness claims** | No (in general) | "This code is correct" cannot be proven for Turing-complete programs |
+| **Consistency claims** | No | "My knowledge base is consistent" hits Lob's theorem directly |
+| **Calibration claims** | Partially | Can measure historical accuracy, cannot guarantee future accuracy |
+| **Halting claims** | No | "This analysis will terminate" is undecidable |
+
+### Breaking the Lobian Loop with External Outcomes
+
+The self-verification primitives (`tp_verify_claim`, `tp_verify_calibration`) appear to create a problematic loop: Librarian verifying Librarian's claims. This would be epistemically vacuous if the verification were purely internal.
+
+**How External Outcomes Break the Loop:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    VERIFICATION HIERARCHY                        │
+│                                                                  │
+│  Level 3: EXTERNAL WORLD (breaks Lobian loop)                   │
+│  ├── Test suite execution (pass/fail is external fact)          │
+│  ├── User feedback ("this answer was wrong")                    │
+│  ├── Runtime behavior (actual errors, performance metrics)      │
+│  └── Downstream success (code that uses advice compiles/works)  │
+│                                                                  │
+│  Level 2: CROSS-VALIDATION (partial independence)               │
+│  ├── Different models checking each other                       │
+│  ├── AST parser vs LLM synthesis comparison                     │
+│  └── Multiple retrieval strategies agreeing                     │
+│                                                                  │
+│  Level 1: INTERNAL CONSISTENCY (necessary but not sufficient)   │
+│  ├── Claims don't contradict each other                         │
+│  ├── Evidence chains are well-formed                            │
+│  └── Confidence values are calibrated historically              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Insight:** `tp_learn_from_outcome` is the critical primitive that grounds the self-improvement loop in external reality. Without outcomes from the real world, the system would be verifying its claims using only its own reasoning - which cannot establish truth.
+
+### What Can vs Cannot Be Self-Verified
+
+**Claims that CAN be meaningfully self-verified:**
+
+1. **Existence claims with AST grounding**
+   - "Function `processData` exists in `src/utils.ts`"
+   - Verifiable by: AST parsing (external to LLM reasoning)
+
+2. **Structural claims with test evidence**
+   - "Function `validate` returns boolean"
+   - Verifiable by: Type checker output, test execution
+
+3. **Behavioral claims with outcome tracking**
+   - "My code suggestions compile successfully 85% of the time"
+   - Verifiable by: Tracking actual compilation outcomes over time
+
+4. **Calibration claims with sufficient samples**
+   - "When I say 80% confident, I'm right ~80% of the time"
+   - Verifiable by: Statistical analysis of prediction/outcome pairs
+
+**Claims that CANNOT be meaningfully self-verified:**
+
+1. **Universal correctness claims**
+   - "This code handles all edge cases correctly"
+   - Why not: Would require exhaustive testing (impossible for most programs)
+
+2. **Semantic understanding claims**
+   - "I truly understand what this code does"
+   - Why not: No external grounding for "understanding"
+
+3. **Future performance claims**
+   - "I will always give good advice on this codebase"
+   - Why not: Distribution shift, novel situations
+
+4. **Self-consistency claims**
+   - "My knowledge base contains no contradictions"
+   - Why not: Lob's theorem directly applies
+
+### Practical Mitigations
+
+Given these limitations, the self-improvement primitives implement several mitigations:
+
+1. **Ground in external outcomes whenever possible**
+   - `tp_learn_from_outcome` requires actual outcome data
+   - `tp_verify_calibration` uses historical prediction/outcome pairs
+
+2. **Use confidence bounds, not point estimates**
+   - Acknowledge uncertainty in verification claims
+   - Propagate uncertainty through evidence chains
+
+3. **Detect Gettier cases**
+   - `tp_verify_claim` includes Gettier analysis
+   - Identifies "accidentally correct" beliefs that lack proper justification
+
+4. **Require human escalation for high-risk claims**
+   - `tc_continuous_improvement` has gates that escalate to humans
+   - Critical architectural changes require external approval
+
+5. **Track verification method strength**
+   - AST verification > LLM synthesis verification
+   - Test-based verification > consistency-based verification
+
+### References
+
+- Lob, M.H. (1955) "Solution of a Problem of Leon Henkin"
+- Godel, K. (1931) "On Formally Undecidable Propositions"
+- Yudkowsky, E. & Herreshoff, M. (2013) "Tiling Agents for Self-Modifying AI"
+- Christiano, P. (2014) "Non-Omniscience, Probabilistic Inference, and Metamathematics"
+
+---
+
+## Automated Rollback Mechanism
+
+The rollback mechanism provides safety infrastructure for self-improvement operations. When a self-improvement cycle degrades system health, the system must be able to restore to a known-good state.
+
+### Rollback Interfaces
+
+```typescript
+import type { ConfidenceValue } from '../epistemics/confidence.js';
+
+/**
+ * Serialized state that can be restored.
+ *
+ * Contains all mutable state needed to restore the system to a checkpoint:
+ * - Calibration reports
+ * - Knowledge graph state
+ * - Configuration values
+ * - Learned patterns
+ */
+export interface SerializedState {
+  /** Version for migration compatibility */
+  version: string;
+  /** Serialized calibration reports by category */
+  calibration: Record<string, unknown>;
+  /** Serialized patterns from tp_learn_extract_pattern */
+  patterns: unknown[];
+  /** Configuration values that may have been modified */
+  config: Record<string, unknown>;
+  /** Checksum for integrity verification */
+  checksum: string;
+}
+
+/**
+ * A point in time to which the system can be rolled back.
+ */
+export interface RollbackPoint {
+  /** Unique identifier for this checkpoint */
+  id: string;
+  /** When the checkpoint was created */
+  timestamp: Date;
+  /** Serialized system state */
+  state: SerializedState;
+  /** Metadata about the checkpoint */
+  metadata: {
+    /** Why this checkpoint was created */
+    reason: string;
+    /** What operation triggered the checkpoint (e.g., primitive ID) */
+    triggeredBy: string;
+    /** Health score at checkpoint time */
+    healthScore?: number;
+    /** Tags for filtering */
+    tags?: string[];
+  };
+}
+
+/**
+ * Manages checkpoints and rollback operations.
+ */
+export interface RollbackManager {
+  /**
+   * Create a checkpoint of current system state.
+   *
+   * @param reason - Human-readable reason for checkpoint
+   * @returns The created RollbackPoint
+   */
+  createCheckpoint(reason: string): Promise<RollbackPoint>;
+
+  /**
+   * Restore system to a previous checkpoint.
+   *
+   * @param checkpointId - ID of the checkpoint to restore
+   * @throws If checkpoint not found or restoration fails
+   */
+  rollback(checkpointId: string): Promise<void>;
+
+  /**
+   * List all available checkpoints.
+   *
+   * @returns Checkpoints ordered by timestamp (most recent first)
+   */
+  listCheckpoints(): RollbackPoint[];
+
+  /**
+   * Remove checkpoints older than maxAge.
+   *
+   * @param maxAge - Maximum age in milliseconds
+   * @returns Number of checkpoints pruned
+   */
+  pruneOldCheckpoints(maxAge: number): number;
+
+  /**
+   * Get the most recent checkpoint.
+   *
+   * @returns Most recent checkpoint or undefined if none exist
+   */
+  getLatestCheckpoint(): RollbackPoint | undefined;
+
+  /**
+   * Verify checkpoint integrity.
+   *
+   * @param checkpointId - ID of checkpoint to verify
+   * @returns True if checkpoint is valid and restorable
+   */
+  verifyCheckpoint(checkpointId: string): Promise<boolean>;
+}
+```
+
+### Rollback Triggers
+
+Rollback is triggered when any of the following conditions are met:
+
+| Trigger | Threshold | Action |
+|---------|-----------|--------|
+| Health score drop | > 0.15 from checkpoint | Auto-rollback |
+| Consecutive failures | >= 3 improvement attempts | Auto-rollback + escalate |
+| Calibration degradation | ECE increases by > 0.1 | Auto-rollback |
+| Critical error | Any unrecoverable error | Auto-rollback + alert |
+
+### Implementation Notes
+
+The rollback mechanism should:
+
+1. **Create checkpoints before any self-improvement cycle**
+   - Automatically in `tc_continuous_improvement`
+   - Explicitly via `tp_improve_plan_fix` before applying fixes
+
+2. **Verify checkpoints before rollback**
+   - Checksum validation
+   - Schema version compatibility check
+   - Partial restoration is not allowed
+
+3. **Maintain checkpoint history**
+   - Keep at least 3 checkpoints
+   - Prune checkpoints older than 7 days (configurable)
+   - Tag important checkpoints (e.g., "pre-release", "stable")
+
+4. **Integrate with health dashboard**
+   - Show checkpoint timeline
+   - Allow manual rollback from UI
+   - Alert on rollback events
+
+---
+
+## Escalation Thresholds
+
+Escalation determines when the self-improvement system should defer to human oversight. This section defines the triggers and decision tree for escalation.
+
+### Escalation Levels
+
+| Level | Name | Description | Human Involvement |
+|-------|------|-------------|-------------------|
+| 0 | **Autonomous** | System operates normally | None - full self-service |
+| 1 | **Advisory** | System flags for review | Async notification |
+| 2 | **Confirmation** | System pauses for approval | Must approve to continue |
+| 3 | **Manual** | System cannot proceed | Human takes over |
+
+### Health Score Thresholds
+
+The health score (0.0-1.0) determines the base escalation level:
+
+```
+Health Score     Escalation Level
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+>= 0.8           Level 0 (Autonomous)
+[0.6, 0.8)       Level 1 (Advisory)
+[0.4, 0.6)       Level 2 (Confirmation)
+< 0.4            Level 3 (Manual)
+```
+
+### Specific Trigger Conditions
+
+Beyond health score, specific conditions trigger immediate escalation:
+
+#### Level 1 (Advisory) Triggers
+
+- First occurrence of a new error type
+- Health score dropped > 0.05 in single cycle
+- Calibration ECE increased > 0.03
+- Distribution shift detected (PSI > 0.15)
+- Pattern extraction failed for 2+ consecutive cycles
+
+#### Level 2 (Confirmation) Triggers
+
+- Health score dropped > 0.10 in single cycle
+- Consecutive failures >= 2
+- Calibration ECE increased > 0.07
+- Any Gettier case detected with risk > 0.5
+- Fix planned affects > 5 files
+- Fix planned modifies public API
+
+#### Level 3 (Manual) Triggers
+
+- Health score dropped > 0.15 (after rollback)
+- Consecutive failures >= 3 (after rollback)
+- Calibration ECE > 0.25 (severely miscalibrated)
+- Theoretical constraint violation detected
+- Security-sensitive files affected
+- Rollback itself failed
+
+### Decision Tree
+
+```
+START: Self-improvement cycle triggered
+         │
+         ▼
+    ┌─────────────────────┐
+    │ Check health score  │
+    └──────────┬──────────┘
+               │
+    ┌──────────┴──────────┐
+    │                     │
+    ▼                     ▼
+ < 0.4?              >= 0.4?
+    │                     │
+    ▼                     ▼
+ ESCALATE          Continue to
+ Level 3           specific checks
+                         │
+         ┌───────────────┼───────────────┐
+         │               │               │
+         ▼               ▼               ▼
+    Check for       Check for       Check for
+    L2 triggers     L1 triggers     anomalies
+         │               │               │
+         ▼               ▼               ▼
+    Any match?      Any match?      Any match?
+    │     │         │     │         │     │
+   Yes    No       Yes    No       Yes    No
+    │     │         │     │         │     │
+    ▼     └────┬────┘     └────┬────┘     │
+ ESCALATE      │               │          │
+ Level 2       ▼               ▼          │
+          ESCALATE        PROCEED         │
+          Level 1         Level 0 ◀───────┘
+                              │
+                              ▼
+                    Execute improvement
+                              │
+                              ▼
+                    Post-execution check
+                              │
+                    ┌─────────┴─────────┐
+                    │                   │
+                    ▼                   ▼
+              Health improved?    Health degraded?
+                    │                   │
+                    ▼                   ▼
+              COMPLETE            ROLLBACK
+                                       │
+                                       ▼
+                                Check rollback
+                                success
+                                       │
+                              ┌────────┴────────┐
+                              │                 │
+                              ▼                 ▼
+                         Success           Failed
+                              │                 │
+                              ▼                 ▼
+                    Log and continue      ESCALATE
+                    (may trigger L1)      Level 3
+```
+
+### Escalation Actions
+
+| Level | Automated Actions | Human Actions Required |
+|-------|-------------------|------------------------|
+| **L0** | Proceed normally | None |
+| **L1** | Log event, send async notification, continue | Review within 24h |
+| **L2** | Pause execution, create detailed report | Approve/reject within 1h |
+| **L3** | Full stop, rollback to last known good, alert | Direct intervention required |
+
+### Configuration
+
+Escalation thresholds can be configured per-environment:
+
+```typescript
+interface EscalationConfig {
+  /** Base health score thresholds [L3, L2, L1] */
+  healthThresholds: [number, number, number];
+
+  /** Consecutive failure threshold for L2 */
+  consecutiveFailuresL2: number;
+
+  /** Consecutive failure threshold for L3 */
+  consecutiveFailuresL3: number;
+
+  /** Health drop threshold for L1 */
+  healthDropL1: number;
+
+  /** Health drop threshold for L2 */
+  healthDropL2: number;
+
+  /** Health drop threshold for L3 (triggers rollback) */
+  healthDropL3: number;
+
+  /** Files affected threshold for L2 */
+  filesAffectedL2: number;
+
+  /** Whether to allow auto-rollback */
+  autoRollbackEnabled: boolean;
+
+  /** Timeout for L2 approval (ms) */
+  l2ApprovalTimeout: number;
+}
+
+const DEFAULT_ESCALATION_CONFIG: EscalationConfig = {
+  healthThresholds: [0.4, 0.6, 0.8],
+  consecutiveFailuresL2: 2,
+  consecutiveFailuresL3: 3,
+  healthDropL1: 0.05,
+  healthDropL2: 0.10,
+  healthDropL3: 0.15,
+  filesAffectedL2: 5,
+  autoRollbackEnabled: true,
+  l2ApprovalTimeout: 3600000, // 1 hour
 };
 ```
 

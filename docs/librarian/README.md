@@ -1,10 +1,15 @@
 # Librarian Documentation (Canonical)
 
-Status: partial
+Status: infrastructure complete, validation pending
 Scope: entrypoint for the Librarian knowledge system docs and decision tree.
-Last Verified: 2026-01-04
+Last Verified: 2026-01-26
 Owner: librarianship
 Evidence: docs only (implementation evidence lives in STATUS.md)
+
+> **Current State (2026-01-26)**
+> - Infrastructure (Phases 0-11): ✅ Complete (~3,500+ tests)
+> - Validation (Phases 12-22): ⏳ Pending (57 work units)
+> - See `/CODEX_ORCHESTRATOR.md` for full roadmap
 
 ## What Librarian Is
 Librarian is the knowledge and understanding layer for any codebase. It
@@ -25,6 +30,7 @@ and humans, with calibrated confidence, defeaters, and explicit traces.
 - Not a fake-embedding system or heuristic-only retrieval.
 
 ## Start Here (Decision Tree)
+- **Orchestration & Validation Roadmap** -> `/CODEX_ORCHESTRATOR.md` (Phases 0-22)
 - Doc architecture + governance -> `docs/librarian/DOCS_ARCHITECTURE.md`
 - Non-negotiable mission -> `docs/librarian/VISION.md`
 - System architecture + directory map -> `docs/librarian/SYSTEM_ARCHITECTURE.md`
@@ -42,6 +48,7 @@ and humans, with calibrated confidence, defeaters, and explicit traces.
 - Super-brain implementation protocol -> `docs/librarian/SUPER_BRAIN_IMPLEMENTATION_PROTOCOL.md`
 
 ## Canonical Doc Map
+- `/CODEX_ORCHESTRATOR.md` (full implementation + validation roadmap, Phases 0-22)
 - `docs/librarian/DOCS_ARCHITECTURE.md` (doc governance)
 - `docs/librarian/VISION.md` (why we exist)
 - `docs/librarian/SYSTEM_ARCHITECTURE.md` (components, boundaries, directory map)
@@ -53,9 +60,10 @@ and humans, with calibrated confidence, defeaters, and explicit traces.
 - `docs/librarian/IMPLEMENTATION_INTEGRATION_PLAN.md` (Wave0 + external integration plan)
 - `docs/librarian/PACKAGING_AND_ONBOARDING.md` (packaging + onboarding)
 - `docs/librarian/MODEL_POLICY.md` (daily model selection)
-- `docs/librarian/validation.md` (test and evidence gates)
+- `docs/librarian/validation.md` (test and evidence gates, RAGAS-style metrics)
 - `docs/librarian/AUDIT.md` (audit runbook)
 - `docs/librarian/STATUS.md` (target vs reality, evidence linked)
+- `docs/librarian/GATES.json` (machine-readable gate status, layers 0-7)
 - `docs/librarian/SUPER_BRAIN_PLAN.md` (Phase 6+: super-brain roadmap; planned)
 - `docs/librarian/MASTER.md` (working synthesis notes; not canonical)
 

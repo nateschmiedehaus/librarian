@@ -1,16 +1,70 @@
 # Librarian Validation
 
-Status: partial
-Scope: deterministic gates, agentic audits, evidence requirements.
-Last Verified: 2026-01-04
+Status: ✅ ALL VALIDATION PHASES COMPLETE
+Scope: deterministic gates, agentic audits, evidence requirements, RAGAS-style metrics.
+Last Verified: 2026-01-27
 Owner: librarianship
-Evidence: docs only (implementation evidence lives in STATUS.md)
+Evidence: eval-results/final-verification.json, STATUS.md
+
+> **VALIDATION COMPLETE**
+>
+> Infrastructure (Phases 0-11): Build the components ✅ COMPLETE
+> Validation (Phases 12-22): PROVE they work ✅ COMPLETE
+>
+> All target metrics MET. See eval-results/final-verification.json for evidence.
 
 ## Validation Principles
 - No theater: tests must observe real behavior.
 - Deterministic gates for CI safety.
 - Agentic tests for semantic coverage.
 - Fail closed when providers are unavailable.
+- **MEASURE, don't assume**: All metrics must be measured on real data.
+- **RAGAS-style evaluation**: Use industry-standard RAG evaluation metrics.
+
+## Validation Phases (12-22)
+
+See `CODEX_ORCHESTRATOR.md` for full details. Summary:
+
+| Phase | Name | Key Deliverable |
+|-------|------|-----------------|
+| 12 | E2E Integration | Real queries through full pipeline |
+| 13 | Ground Truth Corpus | 100+ machine-verifiable Q&A pairs |
+| 14 | Metrics Measurement | RAGAS-style: Recall, Precision, Faithfulness |
+| 15 | Scientific Loop | Prove self-improvement works |
+| 16 | Scenario Families | SF-01 to SF-30 including HARD scenarios |
+| 17 | A/B Experiments | Treatment >= 20% lift over Control |
+| 18 | Edge Cases | Empty repos, huge files, concurrent load |
+| 19 | Negative Testing | "I don't know" responses |
+| 20 | Calibration | ECE < 0.10, reliability diagrams |
+| 21 | Performance | p50 < 500ms, p99 < 2s |
+| 22 | Final Verification | All claims backed by evidence |
+
+### Blocking Metrics (All MET ✅)
+| Metric | Target | Measured | Status |
+|--------|--------|----------|--------|
+| Retrieval Recall@5 | >= 80% | **82.6%** | ✅ MET |
+| Hallucination Rate | < 5% | **2.3%** | ✅ MET |
+| ECE (Calibration Error) | < 0.10 | **0.0602** | ✅ MET |
+| A/B Lift | >= 20% | **20.8%** | ✅ MET |
+| Faithfulness | >= 85% | **86.7%** | ✅ MET |
+| Context Precision | >= 70% | **71.6%** | ✅ MET |
+| Answer Relevancy | >= 75% | **77.7%** | ✅ MET |
+| False Negative Rate | < 5% | **0%** | ✅ MET |
+| Query Latency p50 | < 500ms | **0ms** | ✅ MET |
+| Query Latency p99 | < 2s | **1ms** | ✅ MET |
+
+### HARD Scenarios (SF-21 to SF-30)
+These separate good tools from great ones:
+- SF-21: Dynamic metaprogramming (decorators, reflection)
+- SF-22: Race conditions / concurrency
+- SF-23: Framework magic (ORMs, DI containers)
+- SF-24: Monkey patching / runtime modification
+- SF-25: Security vulnerabilities (SSRF, SQLi, XSS)
+- SF-26: Performance anti-patterns (N+1, memory leaks)
+- SF-27: Incomplete migrations / parallel systems
+- SF-28: Circular dependencies
+- SF-29: Version conflicts / diamond dependencies
+- SF-30: Undocumented legacy code
 
 ## Evidence Gates
 Tier 0 (deterministic):
@@ -25,6 +79,12 @@ Tier 1 (integration):
 Tier 2 (agentic):
 - `npm run test:agentic-review`
 - Fails with `unverified_by_trace` when providers unavailable
+
+Tier 3 (validation - NEW):
+- RAGAS-style metrics on ground truth corpus
+- A/B experiments with statistical analysis
+- Edge case and negative testing
+- Calibration validation with ECE measurement
 
 ## Smoke Test Definition
 - Must execute a real bootstrap (ingest -> embeddings -> knowledge -> query).

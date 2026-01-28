@@ -858,3 +858,31 @@ export {
   // Factory
   createBugInjector,
 } from './bug_injector.js';
+
+export {
+  // Types
+  type FactType,
+  type SearchStrategy,
+  type AtomicFact,
+  type SearchResult,
+  type FactVerification,
+  type SAFEResult,
+  type SAFEConfig,
+  type SearchOptions,
+
+  // Constants
+  DEFAULT_SAFE_CONFIG,
+
+  // Functions
+  decomposeClaim,
+  generateSearchQueries,
+  searchForEvidence,
+  evaluateEvidence,
+  aggregateVerdict,
+
+  // Class
+  SAFEVerifier,
+
+  // Factory
+  createSAFEVerifier,
+} from './search_augmented_verification.js';

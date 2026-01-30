@@ -74,10 +74,12 @@ export async function bootstrapCommand(options: BootstrapCommandOptions): Promis
 
   // Run pre-flight checks FIRST to detect problems early
   console.log('Running pre-flight checks...\n');
+  // Allow skipping provider checks via environment variable for offline/degraded mode
+  const skipProviders = process.env.LIBRARIAN_SKIP_PROVIDER_CHECK === '1';
   const preflightReport = await runPreflightChecks({
     workspaceRoot,
-    skipProviderChecks: false, // Will check providers
-    forceProbe: true, // Bootstrap-grade provider probe (fail fast on usage/rate/model issues)
+    skipProviderChecks: skipProviders, // Skip if LIBRARIAN_SKIP_PROVIDER_CHECK=1
+    forceProbe: !skipProviders, // Bootstrap-grade provider probe (fail fast on usage/rate/model issues)
     verbose: true,
   });
 
@@ -98,19 +100,28 @@ export async function bootstrapCommand(options: BootstrapCommandOptions): Promis
     console.log();
   }
 
-  // Check providers (detailed check after preflight)
+  // Check providers (detailed check after preflight) - skip if offline mode
   const providerSpinner = createSpinner('Verifying provider configuration...');
   let providerStatus: AllProviderStatus;
-  try {
-    await requireProviders({ llm: true, embedding: true }, { workspaceRoot, forceProbe: true });
-    providerStatus = await checkAllProviders({ workspaceRoot });
-    providerSpinner.succeed('Providers available');
-  } catch (error) {
-    providerSpinner.fail('Provider check failed');
-    throw createError(
-      'PROVIDER_UNAVAILABLE',
-      error instanceof Error ? error.message : 'Provider unavailable',
-    );
+  if (skipProviders) {
+    providerSpinner.succeed('Provider check skipped (offline mode)');
+    // Create a minimal provider status for offline mode
+    providerStatus = {
+      llm: { available: false, provider: 'none', model: 'offline', latencyMs: 0, error: 'Offline mode' },
+      embedding: { available: true, provider: 'xenova', model: 'all-MiniLM-L6-v2', latencyMs: 0 },
+    };
+  } else {
+    try {
+      await requireProviders({ llm: true, embedding: true }, { workspaceRoot, forceProbe: true });
+      providerStatus = await checkAllProviders({ workspaceRoot });
+      providerSpinner.succeed('Providers available');
+    } catch (error) {
+      providerSpinner.fail('Provider check failed');
+      throw createError(
+        'PROVIDER_UNAVAILABLE',
+        error instanceof Error ? error.message : 'Provider unavailable',
+      );
+    }
   }
 
   // Resolve LLM provider and model from the gate result

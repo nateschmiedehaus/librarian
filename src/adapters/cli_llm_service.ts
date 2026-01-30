@@ -156,9 +156,11 @@ export class CliLlmService {
     }
 
     if (forceCheck) {
-      const probe = await execa('claude', ['--print', 'ok'], {
+      // Use --version instead of --print to avoid conflicts with running Claude sessions
+      // and to avoid consuming API credits during health checks
+      const probe = await execa('claude', ['--version'], {
         env,
-        timeout: this.claudeHealthCheckTimeoutMs || undefined,
+        timeout: 5000, // Version check should be fast
         reject: false,
       });
       if (probe.exitCode !== 0) {

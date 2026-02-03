@@ -1,39 +1,48 @@
 {
   "$schema": "./gates.schema.json",
   "version": "2.2.0",
-  "lastUpdated": "2026-01-27T14:30:00Z",
+  "lastUpdated": "2026-02-03T18:09:00.000Z",
   "updatedBy": "orchestrator",
-  "description": "Machine-readable gate status with tiered testing architecture. All validation phases (12-22) COMPLETE.",
-
+  "description": "Machine-readable gate status with tiered testing architecture (evidence reconciled).",
   "tasks": {
     "layer0.typecheck": {
       "name": "Package Typecheck",
       "layer": 0,
       "command": "npx tsc --noEmit",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "npx tsc --noEmit completed without errors",
-      "dependsOn": []
+      "dependsOn": [],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer0.build": {
       "name": "Repo Build",
       "layer": 0,
       "command": "npm run build",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "npm run build succeeded; assets copied",
-      "dependsOn": ["layer0.typecheck"]
+      "dependsOn": [
+        "layer0.typecheck"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer0.tier0": {
       "name": "Tier-0 Tests (Deterministic)",
       "layer": 0,
       "command": "LIBRARIAN_TEST_MODE=unit npm test -- --run",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-27",
       "evidence": "All 3849 tests passing (225 test files, 71 skipped)",
       "blocking": false,
       "spec": "specs/core/testing-architecture.md",
-      "dependsOn": ["layer0.build"]
+      "dependsOn": [
+        "layer0.build"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer0.tier1": {
       "name": "Tier-1 Tests (Integration)",
@@ -43,7 +52,9 @@
       "lastRun": "2026-01-24",
       "evidence": "Skips gracefully when providers unavailable",
       "spec": "specs/core/testing-architecture.md",
-      "dependsOn": ["layer0.tier0"]
+      "dependsOn": [
+        "layer0.tier0"
+      ]
     },
     "layer0.tier2": {
       "name": "Tier-2 Tests (System)",
@@ -54,7 +65,9 @@
       "evidence": null,
       "note": "LIB-S* system tests require live LLM/embedding providers",
       "spec": "specs/core/testing-architecture.md",
-      "dependsOn": ["layer0.tier1"]
+      "dependsOn": [
+        "layer0.tier1"
+      ]
     },
     "layer0.tier2.useCaseFoundation30": {
       "name": "Tier-2 Use-Case Foundation (UC-001…UC-030)",
@@ -65,7 +78,9 @@
       "evidence": null,
       "note": "Explicit end-to-end execution of the L0 foundation slice against a controlled fixture repo; fails honestly if providers are unavailable",
       "spec": "specs/use-case-targets.md",
-      "dependsOn": ["layer0.tier1"]
+      "dependsOn": [
+        "layer0.tier1"
+      ]
     },
     "layer0.tier2.useCaseFixtureSuite": {
       "name": "Tier-2 Use-Case Fixture Grounding Suite",
@@ -76,203 +91,516 @@
       "evidence": null,
       "note": "Controlled ground-truth fixture checks to prevent regressions that appear correct in prose but are not file-grounded",
       "spec": "specs/use-case-targets.md",
-      "dependsOn": ["layer0.tier1"]
+      "dependsOn": [
+        "layer0.tier1"
+      ]
     },
-
     "layer1.noWave0Imports": {
       "name": "No Wave0 Imports",
       "layer": 1,
       "command": "rg \"src/(wave0|orchestrator)/\" src || echo PASS",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-22",
       "evidence": "No wave0/orchestrator references in package",
-      "dependsOn": ["layer0.tier0"]
+      "dependsOn": [
+        "layer0.tier0"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer1.noDirectImports": {
       "name": "No Direct Librarian Imports",
       "layer": 1,
       "command": "rg \"from '\\.\\./librarian/\" src || echo PASS",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-22",
       "evidence": "No direct imports outside shim",
-      "dependsOn": ["layer0.tier0"]
+      "dependsOn": [
+        "layer0.tier0"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer1.standaloneTests": {
       "name": "Package Tests Standalone",
       "layer": 1,
       "command": "LIBRARIAN_TEST_MODE=unit npm test -- --run",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Standalone package unit run passed (170 files, 2314 tests total)",
-      "dependsOn": ["layer1.noWave0Imports", "layer1.noDirectImports"]
+      "dependsOn": [
+        "layer1.noWave0Imports",
+        "layer1.noDirectImports"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer1.extractionPrereqs": {
       "name": "Extraction Prerequisites (Deterministic)",
       "layer": 1,
       "command": "node scripts/check_librarian_extraction_prereqs.mjs --root .",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Standalone prereq check passes (package metadata + no Wave0-internal imports in package sources)",
-      "dependsOn": ["layer1.standaloneTests"]
+      "dependsOn": [
+        "layer1.standaloneTests"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
-
     "layer2.llmAdapter": {
       "name": "LLM Adapter Complete",
       "layer": 2,
       "command": "rg \"new LLMService\\(\" src --glob '!**/adapters/**' --glob '!**/__tests__/**' || echo PASS",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-24",
       "evidence": "rg check: no LLMService instantiations outside adapters/tests",
-      "dependsOn": ["layer1.standaloneTests"]
+      "dependsOn": [
+        "layer1.standaloneTests"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer2.evidenceLedger": {
       "name": "Evidence Ledger Unified",
       "layer": 2,
       "command": "npx vitest run src/__tests__/provider_gate.test.ts src/api/__tests__/query_trace_ledger.test.ts src/api/__tests__/technique_execution_evidence_ledger.test.ts src/mcp/__tests__/audit.test.ts src/mcp/__tests__/tool_adapter_bridge.test.ts",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Provider gate, query lifecycle, technique execution, and MCP tool calls all append evidence ledger entries (Tier-0 tests passing)",
-      "dependsOn": ["layer1.standaloneTests"]
+      "dependsOn": [
+        "layer1.standaloneTests"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer2.capabilityNegotiation": {
       "name": "Capability Negotiation",
       "layer": 2,
       "command": "npx vitest run src/__tests__/capability_contracts.test.ts",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-24",
       "evidence": "capability_contracts.test.ts passing (Tier-0 deterministic)",
-      "dependsOn": ["layer1.standaloneTests"]
+      "dependsOn": [
+        "layer1.standaloneTests"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer2.toolAdapter": {
       "name": "Tool/MCP Adapter",
       "layer": 2,
       "command": "npx vitest run src/mcp/__tests__/tool_adapter_bridge.test.ts",
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-24",
       "evidence": "tool_adapter_bridge.test.ts passing: MCP server callTool records tool calls to workspace evidence ledger",
-      "dependsOn": ["layer2.evidenceLedger"]
+      "dependsOn": [
+        "layer2.evidenceLedger"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
-
-    "layer3.P0": { "name": "LLM Provider Discovery", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer2.toolAdapter"] },
-    "layer3.P1": { "name": "Operator Execution", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P0"] },
-    "layer3.P2": { "name": "Semantic Selector", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P0"] },
-    "layer3.P3": { "name": "LCL Core", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P0", "layer3.P1"] },
-    "layer3.P4": { "name": "Structure Templates", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P3"] },
-    "layer3.P5": { "name": "Pattern Catalog", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P3"] },
-    "layer3.P6": { "name": "Codebase Advisor", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P5"] },
-    "layer3.P7": { "name": "Evolution Engine", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P6"] },
-    "layer3.P8": { "name": "Zero-Knowledge Bootstrap", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P1"] },
-    "layer3.P9": { "name": "Universal Applicability", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P8"] },
-    "layer3.P10": { "name": "Epistemic Policy", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P9"] },
-    "layer3.P11": { "name": "Storage Interface Split", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P10"] },
-    "layer3.P12": { "name": "Transaction Boundaries", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P11"] },
-    "layer3.P13": { "name": "Prediction-Oriented Memory", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P12"] },
-    "layer3.P14": { "name": "Self-Aware Oracle", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P13"] },
-    "layer3.P15": { "name": "Proof-Carrying Context", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P14"] },
-    "layer3.P16": { "name": "Causal Discovery", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P15"] },
-    "layer3.P17": { "name": "Bi-Temporal Knowledge", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P16"] },
-    "layer3.P18": { "name": "Metacognitive Architecture", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.P17"] },
-
-    "layer3.Q1": { "name": "ConfidenceValue Type", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer0.tier0"] },
-    "layer3.Q2": { "name": "Derivation Rules", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1"] },
-    "layer3.Q3": { "name": "Degradation Handlers", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1"] },
-    "layer3.Q4": { "name": "Migration Script", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.Q1", "layer3.Q2", "layer3.Q3"] },
+    "layer3.P0": {
+      "name": "LLM Provider Discovery",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer2.toolAdapter"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P1": {
+      "name": "Operator Execution",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P0"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P2": {
+      "name": "Semantic Selector",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P0"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P3": {
+      "name": "LCL Core",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P0",
+        "layer3.P1"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P4": {
+      "name": "Structure Templates",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P3"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P5": {
+      "name": "Pattern Catalog",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P3"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P6": {
+      "name": "Codebase Advisor",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P5"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P7": {
+      "name": "Evolution Engine",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P6"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P8": {
+      "name": "Zero-Knowledge Bootstrap",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P1"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P9": {
+      "name": "Universal Applicability",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P8"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P10": {
+      "name": "Epistemic Policy",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P9"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P11": {
+      "name": "Storage Interface Split",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P10"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P12": {
+      "name": "Transaction Boundaries",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P11"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P13": {
+      "name": "Prediction-Oriented Memory",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P12"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P14": {
+      "name": "Self-Aware Oracle",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P13"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P15": {
+      "name": "Proof-Carrying Context",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P14"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P16": {
+      "name": "Causal Discovery",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P15"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P17": {
+      "name": "Bi-Temporal Knowledge",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P16"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.P18": {
+      "name": "Metacognitive Architecture",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.P17"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.Q1": {
+      "name": "ConfidenceValue Type",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer0.tier0"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.Q2": {
+      "name": "Derivation Rules",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.Q1"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.Q3": {
+      "name": "Degradation Handlers",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.Q1"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.Q4": {
+      "name": "Migration Script",
+      "layer": 3,
+      "status": "not_implemented",
+      "verified": false,
+      "dependsOn": [
+        "layer3.Q1",
+        "layer3.Q2",
+        "layer3.Q3"
+      ]
+    },
     "layer3.Q5": {
       "name": "Migrate claim confidence surfaces",
       "layer": 3,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Claim confidence now stored as ConfidenceValue with signalStrength for heuristics; no_raw_claim_confidence.test.ts enforces numeric ban",
       "verified": false,
-      "dependsOn": ["layer3.Q4"]
+      "dependsOn": [
+        "layer3.Q4"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
     },
     "layer3.Q6": {
       "name": "Rename heuristic confidence fields",
       "layer": 3,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Claim heuristic values renamed to signalStrength (epistemics types/storage/defeaters, zero-knowledge bootstrap)",
       "verified": false,
-      "dependsOn": ["layer3.Q5"]
+      "dependsOn": [
+        "layer3.Q5"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
     },
     "layer3.Q7": {
       "name": "Reduce legacy placeholder usage",
       "layer": 3,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Claim constructors default to absent('uncalibrated'); numeric claim confidence literals removed",
       "verified": false,
-      "dependsOn": ["layer3.Q5"]
+      "dependsOn": [
+        "layer3.Q5"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
     },
     "layer3.Q8": {
       "name": "TypeScript enforcement (claim boundary)",
       "layer": 3,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Claim boundary asserts ConfidenceValue for claim entries; confidence_guards.test.ts enforces runtime rejection of raw numeric confidence",
       "verified": false,
-      "dependsOn": ["layer3.Q1"]
+      "dependsOn": [
+        "layer3.Q1"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
     },
-
-    "layer3.D1": { "name": "7 Domain Primitives", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.Q1", "layer3.Q2", "layer3.Q3"] },
-    "layer3.D2": { "name": "10 World-Class Compositions", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D1"] },
-    "layer3.D3": { "name": "Domain Construction Protocol", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D2"] },
-    "layer3.D4": { "name": "Aspect Decomposer", "layer": 3, "status": "implemented", "verified": false, "dependsOn": ["layer3.D3"] },
-
+    "layer3.D1": {
+      "name": "7 Domain Primitives",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.Q1",
+        "layer3.Q2",
+        "layer3.Q3"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.D2": {
+      "name": "10 World-Class Compositions",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.D1"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.D3": {
+      "name": "Domain Construction Protocol",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.D2"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
+    "layer3.D4": {
+      "name": "Aspect Decomposer",
+      "layer": 3,
+      "status": "unverified",
+      "verified": false,
+      "dependsOn": [
+        "layer3.D3"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
+    },
     "layer3.C1": {
       "name": "Claim-Outcome Tracking",
       "layer": 3,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "ClaimOutcomeTracker records claim/outcome state + evidence ledger entries; outcome_tracking.test.ts passing",
       "verified": false,
-      "dependsOn": ["layer3.Q2"]
+      "dependsOn": [
+        "layer3.Q2"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
     },
     "layer3.C2": {
       "name": "Calibration Curves",
       "layer": 3,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "calibration_curves.test.ts passing; computeCalibrationCurve + computeCalibrationReport verified with ECE/MCE samples",
       "verified": false,
-      "dependsOn": ["layer3.C1"]
+      "dependsOn": [
+        "layer3.C1"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
     },
     "layer3.C3": {
       "name": "Confidence Adjustment",
       "layer": 3,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "confidence_adjustment.test.ts passing; adjustConfidenceValue applies calibration curves",
       "verified": false,
-      "dependsOn": ["layer3.C2"]
+      "dependsOn": [
+        "layer3.C2"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest."
     },
-    "layer3.C4": { "name": "Calibration Dashboard", "layer": 3, "status": "not_implemented", "verified": false, "dependsOn": ["layer3.C2"] },
-
+    "layer3.C4": {
+      "name": "Calibration Dashboard",
+      "layer": 3,
+      "status": "not_implemented",
+      "verified": false,
+      "dependsOn": [
+        "layer3.C2"
+      ]
+    },
     "layer4.verification": {
       "name": "Final Verification",
       "layer": 4,
       "status": "pending",
-      "dependsOn": ["layer3.P18", "layer3.Q8", "layer3.D4", "layer3.C4"]
+      "dependsOn": [
+        "layer3.P18",
+        "layer3.Q8",
+        "layer3.D4",
+        "layer3.C4"
+      ]
     },
-
     "layer1.repoExtraction": {
       "name": "Repository Extraction (Standalone Repo Cutover)",
       "layer": 1,
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "Standalone repo exists; Wave0 dependency points to external librarian repo; extraction prereqs + no-direct-import checks pass.",
       "currentState": "standalone repository",
       "targetState": "standalone repository",
-      "dependsOn": ["layer1.standaloneTests"]
+      "dependsOn": [
+        "layer1.standaloneTests"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
-
     "layer5.evalCorpus": {
       "name": "Ground Truth Evaluation Corpus (Machine-Verifiable)",
       "layer": 5,
       "status": "invalid",
       "target": "5+ EXTERNAL repos (not AI-generated), AST-extracted facts, citation verification",
       "spec": "specs/track-eval-machine-verifiable.md",
-      "dependsOn": ["layer4.verification"],
+      "dependsOn": [
+        "layer4.verification"
+      ],
       "note": "CRITICAL: Current synthetic repos are INVALID - circular evaluation. Must use real external repos.",
       "blocking": true,
       "currentState": "synthetic repos only (invalid)",
@@ -284,7 +612,9 @@
       "status": "queued",
       "target": "5+ real GitHub repos (not AI-generated, post-2024 or obscure)",
       "spec": "specs/track-eval-machine-verifiable.md",
-      "dependsOn": ["layer5.scientificLoop"],
+      "dependsOn": [
+        "layer5.scientificLoop"
+      ],
       "queuedWorkUnit": "WU-801-REAL (after WU-1001-1003)",
       "note": "eval-corpus/repos/* have no git remotes. WU-801-REAL queued after Phase 10 core work.",
       "verification": "Each repo must have: git remote -v showing real origin"
@@ -295,7 +625,9 @@
       "status": "not_started",
       "target": "Extract function defs, imports, call graphs, types from any codebase",
       "spec": "specs/track-eval-machine-verifiable.md",
-      "dependsOn": ["layer5.externalRepos"]
+      "dependsOn": [
+        "layer5.externalRepos"
+      ]
     },
     "layer5.citationVerifier": {
       "name": "Citation Verifier",
@@ -303,7 +635,9 @@
       "status": "not_started",
       "target": "Verify all file/line/identifier citations in Librarian responses",
       "spec": "specs/track-eval-machine-verifiable.md",
-      "dependsOn": ["layer5.astFactExtractor"]
+      "dependsOn": [
+        "layer5.astFactExtractor"
+      ]
     },
     "layer5.consistencyChecker": {
       "name": "Multi-Query Consistency Checker",
@@ -311,7 +645,9 @@
       "status": "not_started",
       "target": "Detect contradictions across query variants",
       "spec": "specs/track-eval-machine-verifiable.md",
-      "dependsOn": ["layer5.citationVerifier"]
+      "dependsOn": [
+        "layer5.citationVerifier"
+      ]
     },
     "layer5.agentHarness": {
       "name": "Agent Performance Test Harness",
@@ -319,7 +655,9 @@
       "status": "not_started",
       "target": "Spawn worker pairs, record events, measure lift",
       "spec": "specs/track-eval-agent-performance.md",
-      "dependsOn": ["layer5.consistencyChecker"]
+      "dependsOn": [
+        "layer5.consistencyChecker"
+      ]
     },
     "layer5.taskBank": {
       "name": "Task Bank (80 tasks across 4 repos)",
@@ -327,7 +665,9 @@
       "status": "not_started",
       "target": "20 tasks per repo × 4 repos, T1-T5 complexity",
       "spec": "specs/track-eval-agent-performance.md",
-      "dependsOn": ["layer5.externalRepos"]
+      "dependsOn": [
+        "layer5.externalRepos"
+      ]
     },
     "layer5.contextLevels": {
       "name": "Context Level System",
@@ -335,7 +675,9 @@
       "status": "not_started",
       "target": "6 context levels (cold start → full context)",
       "spec": "specs/track-eval-agent-performance.md",
-      "dependsOn": ["layer5.agentHarness"]
+      "dependsOn": [
+        "layer5.agentHarness"
+      ]
     },
     "layer5.abExperiments": {
       "name": "A/B Experiment Runner",
@@ -343,7 +685,10 @@
       "status": "not_started",
       "target": "Control vs Treatment worker comparison",
       "spec": "specs/track-eval-agent-performance.md",
-      "dependsOn": ["layer5.contextLevels", "layer5.taskBank"]
+      "dependsOn": [
+        "layer5.contextLevels",
+        "layer5.taskBank"
+      ]
     },
     "layer5.successRateLift": {
       "name": "Success Rate Lift (T3+)",
@@ -352,7 +697,9 @@
       "target": "> 25% improvement on moderate+ tasks",
       "blocking": true,
       "spec": "specs/track-eval-agent-performance.md",
-      "dependsOn": ["layer5.abExperiments"]
+      "dependsOn": [
+        "layer5.abExperiments"
+      ]
     },
     "layer5.timeReduction": {
       "name": "Time Reduction",
@@ -361,45 +708,62 @@
       "target": "> 30% faster completion",
       "blocking": false,
       "spec": "specs/track-eval-agent-performance.md",
-      "dependsOn": ["layer5.abExperiments"]
+      "dependsOn": [
+        "layer5.abExperiments"
+      ]
     },
     "layer5.evalHarness": {
       "name": "Automated Evaluation Harness",
       "layer": 5,
-      "status": "implemented",
+      "status": "unverified",
       "lastRun": "2026-01-26",
       "evidence": "eval:ci script runs eval-corpus with lexical baseline, compares against eval-corpus/baseline.json, and writes eval-corpus/results.json; GitHub workflow eval.yml runs on push/PR with regression thresholds",
       "target": "Nightly eval with regression detection",
       "spec": "specs/track-eval-infrastructure.md#e2",
-      "dependsOn": ["layer5.abExperiments"],
-      "note": "Nightly schedule still pending"
+      "dependsOn": [
+        "layer5.abExperiments"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer5.retrievalRecall": {
       "name": "Retrieval Recall@5",
       "layer": 5,
-      "status": "not_measured",
+      "status": "pass",
       "target": ">= 80%",
       "blocking": true,
       "spec": "specs/track-eval-infrastructure.md#e2",
-      "dependsOn": ["layer5.evalHarness"]
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
+      "lastRun": "2026-02-03",
+      "measured": 0.82
     },
     "layer5.retrievalPrecision": {
       "name": "Retrieval Precision@5",
       "layer": 5,
-      "status": "not_measured",
+      "status": "pass",
       "target": ">= 70%",
       "blocking": false,
       "spec": "specs/track-eval-infrastructure.md#e2",
-      "dependsOn": ["layer5.evalHarness"]
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
+      "lastRun": "2026-02-03",
+      "measured": 0.74
     },
     "layer5.hallucinationRate": {
       "name": "Hallucination Rate",
       "layer": 5,
-      "status": "not_measured",
+      "status": "pass",
       "target": "< 5%",
       "blocking": true,
       "spec": "specs/track-eval-infrastructure.md#e2",
-      "dependsOn": ["layer5.evalHarness"]
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
+      "lastRun": "2026-02-03",
+      "measured": 0.03
     },
     "layer5.synthesisAccuracyStructural": {
       "name": "Synthesis Accuracy (Structural)",
@@ -408,7 +772,9 @@
       "target": ">= 70%",
       "blocking": false,
       "spec": "specs/track-eval-infrastructure.md#e2",
-      "dependsOn": ["layer5.evalHarness"]
+      "dependsOn": [
+        "layer5.evalHarness"
+      ]
     },
     "layer5.synthesisAccuracyBehavioral": {
       "name": "Synthesis Accuracy (Behavioral)",
@@ -417,7 +783,9 @@
       "target": ">= 60%",
       "blocking": false,
       "spec": "specs/track-eval-infrastructure.md#e2",
-      "dependsOn": ["layer5.evalHarness"]
+      "dependsOn": [
+        "layer5.evalHarness"
+      ]
     },
     "layer5.outcomeCollection": {
       "name": "Outcome Collection Infrastructure",
@@ -425,7 +793,9 @@
       "status": "not_started",
       "target": "Collection API + 1000+ outcomes",
       "spec": "specs/track-eval-infrastructure.md#e3",
-      "dependsOn": ["layer5.evalHarness"]
+      "dependsOn": [
+        "layer5.evalHarness"
+      ]
     },
     "layer5.calibrationCurve": {
       "name": "Calibration Curve Computation",
@@ -433,7 +803,9 @@
       "status": "not_started",
       "target": "ECE < 10%",
       "spec": "specs/track-eval-infrastructure.md#e3",
-      "dependsOn": ["layer5.outcomeCollection"]
+      "dependsOn": [
+        "layer5.outcomeCollection"
+      ]
     },
     "layer5.codebaseProfiler": {
       "name": "Codebase Profiler",
@@ -441,7 +813,9 @@
       "status": "not_started",
       "target": "Detect codebase characteristics for adaptive quality",
       "spec": "specs/track-eval-infrastructure.md#e4",
-      "dependsOn": ["layer5.evalHarness"]
+      "dependsOn": [
+        "layer5.evalHarness"
+      ]
     },
     "layer5.qualityParity": {
       "name": "Quality Parity Across Codebase Types",
@@ -449,16 +823,20 @@
       "status": "not_measured",
       "target": "Worst within 25% of best",
       "spec": "specs/track-eval-infrastructure.md#e4",
-      "dependsOn": ["layer5.codebaseProfiler"]
+      "dependsOn": [
+        "layer5.codebaseProfiler"
+      ]
     },
-
     "layer5.scientificLoop": {
       "name": "Scientific Self-Improvement Loop",
       "layer": 5,
       "status": "pending",
       "target": "Automated detect → hypothesize → test → fix → verify cycle",
       "spec": "specs/track-eval-scientific-loop.md",
-      "dependsOn": ["layer5.abExperiments", "layer5.externalRepos"],
+      "dependsOn": [
+        "layer5.abExperiments",
+        "layer5.externalRepos"
+      ],
       "note": "Proceed after WU-801-REAL completes. Based on AutoSD, RLVR, SWE-agent research."
     },
     "layer5.rlvrVerifier": {
@@ -467,7 +845,9 @@
       "status": "not_started",
       "target": "Binary reward: pass only if all tests pass + no regressions",
       "spec": "specs/track-eval-scientific-loop.md",
-      "dependsOn": ["layer5.scientificLoop"]
+      "dependsOn": [
+        "layer5.scientificLoop"
+      ]
     },
     "layer5.benchmarkEvolver": {
       "name": "Benchmark Self-Evolver",
@@ -475,7 +855,9 @@
       "status": "not_started",
       "target": "Auto-generate prevention tests after each fix",
       "spec": "specs/track-eval-scientific-loop.md",
-      "dependsOn": ["layer5.rlvrVerifier"]
+      "dependsOn": [
+        "layer5.rlvrVerifier"
+      ]
     },
     "layer5.fixSuccessRate": {
       "name": "Fix Success Rate",
@@ -484,16 +866,19 @@
       "target": "> 70% of generated fixes pass verification",
       "blocking": false,
       "spec": "specs/track-eval-scientific-loop.md",
-      "dependsOn": ["layer5.rlvrVerifier"]
+      "dependsOn": [
+        "layer5.rlvrVerifier"
+      ]
     },
-
     "layer6.deadCodeDetection": {
       "name": "Dead Code Detection",
       "layer": 6,
       "status": "not_started",
       "target": "Filter dead code from retrieval",
       "spec": "specs/track-research-hard-problems.md#h3.2",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Engineering-achievable"
     },
     "layer6.redFlagDetection": {
@@ -502,7 +887,9 @@
       "status": "not_started",
       "target": "Confidence adjustment for red flags",
       "spec": "specs/track-research-hard-problems.md#h3.3",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Engineering-achievable"
     },
     "layer6.citationValidation": {
@@ -511,7 +898,9 @@
       "status": "not_started",
       "target": "Verify cited code exists and supports claim",
       "spec": "specs/track-research-hard-problems.md#h1.3",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Engineering-achievable"
     },
     "layer6.iterativeRetrieval": {
@@ -520,7 +909,9 @@
       "status": "not_started",
       "target": "Multi-step retrieval with convergence detection",
       "spec": "specs/track-research-hard-problems.md#h2.2",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Applied research"
     },
     "layer6.commentCodeChecker": {
@@ -529,7 +920,9 @@
       "status": "not_started",
       "target": "Detect misleading comments",
       "spec": "specs/track-research-hard-problems.md#h3.1",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Applied research"
     },
     "layer6.consistencyChecker": {
@@ -538,7 +931,9 @@
       "status": "not_started",
       "target": "Check consistency across variant queries",
       "spec": "specs/track-research-hard-problems.md#h4.1",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Applied research"
     },
     "layer6.entailmentChecker": {
@@ -547,7 +942,9 @@
       "status": "not_started",
       "target": "Verify claims against evidence",
       "spec": "specs/track-research-hard-problems.md#h1.2",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Applied research - requires training data"
     },
     "layer6.graphRetrieval": {
@@ -556,65 +953,119 @@
       "status": "not_started",
       "target": "Dependency/call graph traversal for retrieval",
       "spec": "specs/track-research-hard-problems.md#h2.3",
-      "dependsOn": ["layer5.evalHarness"],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
       "note": "Applied research"
     },
-
     "layer7.e2eIntegration": {
       "name": "E2E Integration Validation (Phase 12)",
       "layer": 7,
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-27",
       "target": "Run real queries through full pipeline on external repos",
       "measured": "124 E2E tests passing",
       "spec": "CODEX_ORCHESTRATOR.md#phase-12",
-      "workUnits": ["WU-1201", "WU-1202", "WU-1203", "WU-1204", "WU-1205"],
-      "dependsOn": ["layer5.evalHarness"]
+      "workUnits": [
+        "WU-1201",
+        "WU-1202",
+        "WU-1203",
+        "WU-1204",
+        "WU-1205"
+      ],
+      "dependsOn": [
+        "layer5.evalHarness"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer7.groundTruthCorpus": {
       "name": "Ground Truth Corpus (Phase 13)",
       "layer": 7,
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-27",
       "target": "100+ machine-verifiable query/answer pairs",
       "measured": "4,785 queries, 2,455 AST facts across 7 repos",
       "spec": "CODEX_ORCHESTRATOR.md#phase-13",
-      "workUnits": ["WU-1301", "WU-1302", "WU-1303", "WU-1304", "WU-1305", "WU-1306"],
-      "dependsOn": ["layer7.e2eIntegration"]
+      "workUnits": [
+        "WU-1301",
+        "WU-1302",
+        "WU-1303",
+        "WU-1304",
+        "WU-1305",
+        "WU-1306"
+      ],
+      "dependsOn": [
+        "layer7.e2eIntegration"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer7.metricsRAGAS": {
       "name": "RAGAS-Style Metrics Measurement (Phase 14)",
       "layer": 7,
       "status": "pass",
-      "lastRun": "2026-01-27",
+      "lastRun": "2026-02-03",
       "target": "Recall@5>=80%, Precision>=70%, Hallucination<5%, Faithfulness>=85%",
-      "measured": { "Recall@5": "82.6%", "Precision": "71.6%", "Hallucination": "2.3%", "Faithfulness": "86.7%", "Relevancy": "77.7%" },
+      "measured": {
+        "recallAt5": 0.82,
+        "contextPrecision": 0.74,
+        "hallucinationRate": 0.03,
+        "faithfulness": 0.87,
+        "answerRelevancy": 0.79
+      },
       "spec": "CODEX_ORCHESTRATOR.md#phase-14",
-      "workUnits": ["WU-1401", "WU-1402", "WU-1403", "WU-1404", "WU-1405", "WU-1406"],
-      "dependsOn": ["layer7.groundTruthCorpus"],
+      "workUnits": [
+        "WU-1401",
+        "WU-1402",
+        "WU-1403",
+        "WU-1404",
+        "WU-1405",
+        "WU-1406"
+      ],
+      "dependsOn": [
+        "layer7.groundTruthCorpus"
+      ],
       "blocking": false
     },
     "layer7.scientificLoopLive": {
       "name": "Scientific Loop Live Execution (Phase 15)",
       "layer": 7,
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-27",
       "target": "Loop fixes at least 3 injected bugs without regression",
       "measured": "100% fix rate (3/3 bugs fixed), 9 prevention tests, 3 regression guards",
       "spec": "CODEX_ORCHESTRATOR.md#phase-15",
-      "workUnits": ["WU-1501", "WU-1502", "WU-1503", "WU-1504", "WU-1505"],
-      "dependsOn": ["layer7.metricsRAGAS"]
+      "workUnits": [
+        "WU-1501",
+        "WU-1502",
+        "WU-1503",
+        "WU-1504",
+        "WU-1505"
+      ],
+      "dependsOn": [
+        "layer7.metricsRAGAS"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer7.scenarioFamilies": {
       "name": "Scenario Family Testing SF-01 to SF-30 (Phase 16)",
       "layer": 7,
       "status": "pass",
-      "lastRun": "2026-01-27",
+      "lastRun": "2026-02-03",
       "target": "All 30 scenario families tested including HARD (SF-21 to SF-30)",
-      "measured": "30/30 scenarios passing",
+      "measured": "30/30",
       "spec": "CODEX_ORCHESTRATOR.md#phase-16",
-      "workUnits": ["WU-1601", "WU-1602", "WU-1603", "WU-1604"],
-      "dependsOn": ["layer7.scientificLoopLive"],
+      "workUnits": [
+        "WU-1601",
+        "WU-1602",
+        "WU-1603",
+        "WU-1604"
+      ],
+      "dependsOn": [
+        "layer7.scientificLoopLive"
+      ],
       "hardScenarios": [
         "SF-21: Dynamic metaprogramming",
         "SF-22: Race conditions",
@@ -631,60 +1082,111 @@
     "layer7.abExperiments": {
       "name": "A/B Worker Experiments (Phase 17)",
       "layer": 7,
-      "status": "pass",
-      "lastRun": "2026-01-27",
+      "status": "fail",
+      "lastRun": "2026-02-03",
       "target": "Treatment >= 20% lift over Control, p < 0.05",
-      "measured": "20.8% lift, p=0.0312",
+      "measured": "lift=0.20833333333333334 (p=0.09371405527122034)",
       "spec": "CODEX_ORCHESTRATOR.md#phase-17",
-      "workUnits": ["WU-1701", "WU-1702", "WU-1703", "WU-1704", "WU-1705"],
-      "dependsOn": ["layer7.scenarioFamilies"],
+      "workUnits": [
+        "WU-1701",
+        "WU-1702",
+        "WU-1703",
+        "WU-1704",
+        "WU-1705"
+      ],
+      "dependsOn": [
+        "layer7.scenarioFamilies"
+      ],
       "blocking": false
     },
     "layer7.edgeCases": {
       "name": "Edge Cases & Stress Testing (Phase 18)",
       "layer": 7,
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-27",
       "target": "No crashes on empty repos, huge files, concurrent load",
       "measured": "0 crashes, 8/8 edge cases passed",
       "spec": "CODEX_ORCHESTRATOR.md#phase-18",
-      "workUnits": ["WU-1801", "WU-1802", "WU-1803", "WU-1804", "WU-1805", "WU-1806"],
-      "dependsOn": ["layer7.abExperiments"]
+      "workUnits": [
+        "WU-1801",
+        "WU-1802",
+        "WU-1803",
+        "WU-1804",
+        "WU-1805",
+        "WU-1806"
+      ],
+      "dependsOn": [
+        "layer7.abExperiments"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer7.negativeTesting": {
       "name": "Negative Testing & I Don't Know (Phase 19)",
       "layer": 7,
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-27",
       "target": "False negative rate < 5%, proper uncertainty disclosure",
       "measured": "0% false negative rate",
       "spec": "CODEX_ORCHESTRATOR.md#phase-19",
-      "workUnits": ["WU-1901", "WU-1902", "WU-1903", "WU-1904", "WU-1905"],
-      "dependsOn": ["layer7.edgeCases"]
+      "workUnits": [
+        "WU-1901",
+        "WU-1902",
+        "WU-1903",
+        "WU-1904",
+        "WU-1905"
+      ],
+      "dependsOn": [
+        "layer7.edgeCases"
+      ],
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer7.calibrationValidation": {
       "name": "Calibration Validation (Phase 20)",
       "layer": 7,
-      "status": "pass",
+      "status": "unverified",
       "lastRun": "2026-01-27",
       "target": "ECE < 0.10, reliability diagram close to diagonal",
       "measured": "ECE = 0.0602",
       "spec": "CODEX_ORCHESTRATOR.md#phase-20",
-      "workUnits": ["WU-2001", "WU-2002", "WU-2003", "WU-2004", "WU-2005"],
-      "dependsOn": ["layer7.negativeTesting"],
-      "blocking": false
+      "workUnits": [
+        "WU-2001",
+        "WU-2002",
+        "WU-2003",
+        "WU-2004",
+        "WU-2005"
+      ],
+      "dependsOn": [
+        "layer7.negativeTesting"
+      ],
+      "blocking": false,
+      "note": "unverified_by_trace(evidence_manifest_missing): Status not backed by evidence manifest.",
+      "verified": false
     },
     "layer7.performanceBenchmark": {
       "name": "Performance Benchmarking (Phase 21)",
       "layer": 7,
-      "status": "pass",
-      "lastRun": "2026-01-27",
+      "status": "fail",
+      "lastRun": "2026-02-03",
       "target": "p50 < 500ms, p99 < 2s, memory < 50MB/1K LOC",
-      "measured": { "p50": "0ms", "p99": "1ms", "memoryPerKLOC": "213MB (test harness overhead)" },
-      "note": "Memory target measures Node.js test harness, not Librarian indexing footprint",
+      "measured": {
+        "p50LatencyMs": 0,
+        "p99LatencyMs": 1,
+        "memoryPerKLOC": 212.22749194919328
+      },
+      "note": "unverified_by_trace(latency_targets_missing): Only memory targets are part of the manifest summary.",
       "spec": "CODEX_ORCHESTRATOR.md#phase-21",
-      "workUnits": ["WU-2101", "WU-2102", "WU-2103", "WU-2104", "WU-2105"],
-      "dependsOn": ["layer7.calibrationValidation"]
+      "workUnits": [
+        "WU-2101",
+        "WU-2102",
+        "WU-2103",
+        "WU-2104",
+        "WU-2105"
+      ],
+      "dependsOn": [
+        "layer7.calibrationValidation"
+      ]
     },
     "layer7.finalVerification": {
       "name": "Final Documentation & Verification (Phase 22)",
@@ -695,38 +1197,108 @@
       "measured": "100% evidence coverage, all metrics documented",
       "evidence": "eval-results/final-verification.json",
       "spec": "CODEX_ORCHESTRATOR.md#phase-22",
-      "workUnits": ["WU-2201", "WU-2202", "WU-2203", "WU-2204", "WU-2205"],
-      "dependsOn": ["layer7.performanceBenchmark"],
+      "workUnits": [
+        "WU-2201",
+        "WU-2202",
+        "WU-2203",
+        "WU-2204",
+        "WU-2205"
+      ],
+      "dependsOn": [
+        "layer7.performanceBenchmark"
+      ],
       "blocking": false
     }
   },
-
   "summary": {
-    "layer0": { "total": 7, "pass": 4, "skip_when_unavailable": 1, "requires_providers": 3 },
-    "layer1": { "total": 5, "pass": 5, "unknown": 0, "not_started": 0 },
-    "layer2": { "total": 4, "pass": 4, "partial": 0, "not_implemented": 0 },
-    "layer3": { "total": 34, "implemented_unverified": 31, "not_implemented": 2, "partial": 1 },
-    "layer4": { "total": 1, "pending": 1 },
-    "layer5": { "total": 11, "implemented": 1, "not_started": 4, "not_measured": 6 },
-    "layer6": { "total": 8, "not_started": 8 },
-    "layer7": { "total": 12, "pass": 12, "note": "All validation phases 12-22 COMPLETE" }
+    "layer0": {
+      "total": 7,
+      "unverified": 3,
+      "skip_when_unavailable": 1,
+      "requires_providers": 3
+    },
+    "layer1": {
+      "total": 5,
+      "unverified": 5
+    },
+    "layer2": {
+      "total": 4,
+      "unverified": 4
+    },
+    "layer3": {
+      "total": 35,
+      "unverified": 33,
+      "not_implemented": 2
+    },
+    "layer4": {
+      "total": 1,
+      "pending": 1
+    },
+    "layer5": {
+      "total": 25,
+      "invalid": 1,
+      "queued": 1,
+      "not_started": 12,
+      "not_measured": 6,
+      "unverified": 1,
+      "pass": 3,
+      "pending": 1
+    },
+    "layer6": {
+      "total": 8,
+      "not_started": 8
+    },
+    "layer7": {
+      "total": 11,
+      "unverified": 6,
+      "pass": 3,
+      "fail": 2
+    }
   },
-
   "validationStatus": {
-    "infrastructure": "complete",
-    "validation": "complete",
-    "totalWorkUnits": 57,
-    "completedWorkUnits": 57,
-    "lastVerified": "2026-01-27",
+    "infrastructure": "unverified_by_trace(evidence_manifest_missing)",
+    "validation": "unverified_by_trace(evidence_manifest_missing)",
+    "totalWorkUnits": null,
+    "completedWorkUnits": null,
+    "lastVerified": "2026-02-03T18:09:00.000Z",
     "blockingMetrics": {
-      "Retrieval Recall@5": { "target": ">=80%", "measured": "82.6%", "status": "MET" },
-      "Hallucination Rate": { "target": "<5%", "measured": "2.3%", "status": "MET" },
-      "ECE": { "target": "<0.10", "measured": "0.0602", "status": "MET" },
-      "A/B Lift": { "target": ">=20%", "measured": "20.8%", "status": "MET" },
-      "False Negative Rate": { "target": "<5%", "measured": "0%", "status": "MET" },
-      "Query Latency p50": { "target": "<500ms", "measured": "0ms", "status": "MET" }
+      "Retrieval Recall@5": {
+        "target": ">=0.8",
+        "measured": "0.82",
+        "status": "MET"
+      },
+      "Context Precision": {
+        "target": ">=0.7",
+        "measured": "0.74",
+        "status": "MET"
+      },
+      "Hallucination Rate": {
+        "target": "<0.05",
+        "measured": "0.03",
+        "status": "MET"
+      },
+      "Faithfulness": {
+        "target": ">=0.85",
+        "measured": "0.87",
+        "status": "MET"
+      },
+      "Answer Relevancy": {
+        "target": ">=0.75",
+        "measured": "0.79",
+        "status": "MET"
+      },
+      "A/B Lift": {
+        "target": ">=0.2",
+        "measured": "0.20833333333333334 (p=0.09371405527122034)",
+        "status": "MET"
+      },
+      "Memory per 1K LOC": {
+        "target": "<=50 MB",
+        "measured": "212.22749194919328 MB",
+        "status": "NOT MET"
+      }
     },
     "evidence": "eval-results/final-verification.json",
-    "note": "All validation phases (12-22) complete. All target metrics MET."
+    "note": "unverified_by_trace(evidence_manifest_missing): Non-manifest validation claims removed; only manifest metrics retained."
   }
 }

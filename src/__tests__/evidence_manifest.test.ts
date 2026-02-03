@@ -7,19 +7,20 @@ import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/p
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import {
-  DEFAULT_EVIDENCE_ARTIFACTS,
-  buildEvidenceManifest,
-  writeEvidenceManifest,
-} from '../evidence_manifest.js';
+import { buildEvidenceManifest, writeEvidenceManifest } from '../evaluation/evidence_manifest.js';
 
 const FIXED_TIME = new Date('2025-01-02T03:04:05.000Z');
 
-async function writeFixtureFile(root: string, relativePath: string, content: string): Promise<string> {
+async function writeFixtureFile(
+  root: string,
+  relativePath: string,
+  content: string,
+  timestamp: Date = FIXED_TIME,
+): Promise<string> {
   const filePath = join(root, relativePath);
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, content, 'utf8');
-  await utimes(filePath, FIXED_TIME, FIXED_TIME);
+  await utimes(filePath, timestamp, timestamp);
   return filePath;
 }
 
@@ -61,12 +62,25 @@ describe('evidence manifest generation', () => {
     'scenario-report.json': JSON.stringify({
       summary: { total: 30, passing: 30, failing: 0 },
     }),
+    'eval-results/extra-metrics.json': JSON.stringify({ note: 'extra' }),
+    'state/audits/librarian/coverage/uc_method_scenario_matrix.json': JSON.stringify({
+      version: 'UCMethodScenarioMatrix.v1',
+      rows: 120,
+    }),
+    'state/audits/librarian/scenarios/scenario-report.v1.json': JSON.stringify({
+      version: 'ScenarioReport.v1',
+      families: 30,
+    }),
   };
+  const auditTimestamp = new Date('2025-01-02T05:06:07.000Z');
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), 'evidence-manifest-'));
     for (const [relativePath, content] of Object.entries(fixtureContents)) {
-      await writeFixtureFile(workspaceRoot, relativePath, content);
+      const timestamp = relativePath.includes('state/audits/librarian/scenarios/')
+        ? auditTimestamp
+        : FIXED_TIME;
+      await writeFixtureFile(workspaceRoot, relativePath, content, timestamp);
     }
   });
 
@@ -77,7 +91,15 @@ describe('evidence manifest generation', () => {
   it('buildEvidenceManifest captures deterministic metadata', async () => {
     const manifest = await buildEvidenceManifest({ workspaceRoot });
 
-    expect(manifest.artifacts.map((artifact) => artifact.path)).toEqual(DEFAULT_EVIDENCE_ARTIFACTS);
+    expect(manifest.artifacts.map((artifact) => artifact.path)).toEqual([
+      'eval-results/ab-results.json',
+      'eval-results/extra-metrics.json',
+      'eval-results/final-verification.json',
+      'eval-results/metrics-report.json',
+      'scenario-report.json',
+      'state/audits/librarian/coverage/uc_method_scenario_matrix.json',
+      'state/audits/librarian/scenarios/scenario-report.v1.json',
+    ]);
 
     const metricsEntry = manifest.artifacts.find(
       (artifact) => artifact.path === 'eval-results/metrics-report.json'
@@ -89,10 +111,23 @@ describe('evidence manifest generation', () => {
     expect(metricsEntry?.size).toBe(metricsStats.size);
     expect(metricsEntry?.sha256).toBe(sha256Hex(metricsContent));
     expect(metricsEntry?.timestamp).toBe(metricsStats.mtime.toISOString());
-    expect(manifest.summary.generatedAt).toBe(FIXED_TIME.toISOString());
+    expect(manifest.summary.generatedAt).toBe(auditTimestamp.toISOString());
     expect(manifest.summary.scenarios.total).toBe(30);
     expect(manifest.summary.metrics.retrievalRecallAt5.mean).toBe(0.82);
     expect(manifest.summary.ab.pValue).toBe(0.0945);
+
+    const auditEntry = manifest.artifacts.find(
+      (artifact) =>
+        artifact.path === 'state/audits/librarian/scenarios/scenario-report.v1.json'
+    );
+    expect(auditEntry).toBeDefined();
+    const auditContent = fixtureContents['state/audits/librarian/scenarios/scenario-report.v1.json'];
+    const auditStats = await stat(
+      join(workspaceRoot, 'state/audits/librarian/scenarios/scenario-report.v1.json')
+    );
+    expect(auditEntry?.size).toBe(auditStats.size);
+    expect(auditEntry?.sha256).toBe(sha256Hex(auditContent));
+    expect(auditEntry?.timestamp).toBe(auditStats.mtime.toISOString());
   });
 
   it('writeEvidenceManifest writes manifest to the audit path', async () => {
@@ -102,6 +137,13 @@ describe('evidence manifest generation', () => {
 
     expect(parsed).toEqual(manifest);
     expect(outputPath).toBe(join(workspaceRoot, 'state', 'audits', 'librarian', 'manifest.json'));
+  });
+
+  it('is deterministic across repeated runs', async () => {
+    const first = await buildEvidenceManifest({ workspaceRoot });
+    const second = await buildEvidenceManifest({ workspaceRoot });
+
+    expect(second).toEqual(first);
   });
 
   it('throws when required artifacts are missing', async () => {

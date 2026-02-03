@@ -73,7 +73,7 @@ export default defineConfig(async () => {
         `Resource pressure (${pressureLevel}): skipping heavy/system tests`
       );
 
-      if (pressureLevel === 'oom_imminent') {
+      if (pressureLevel === 'critical' || pressureLevel === 'oom_imminent') {
         resourceAwareExclude.push(
           '**/evaluation/**/*.test.ts',
           '**/analysis/**/*.test.ts',
@@ -83,7 +83,7 @@ export default defineConfig(async () => {
           '**/librarian_select_compositions.test.ts'
         );
         reasoning.push(
-          'OOM imminent: skipping evaluation/analysis + embedding-intensive tests'
+          `Resource pressure (${pressureLevel}): skipping evaluation/analysis + embedding-intensive tests`
         );
       }
     }

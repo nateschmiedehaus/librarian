@@ -3,8 +3,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, sep } from 'node:path';
 import type { EvidenceManifestSummary } from './evidence_reconciliation.js';
 
 export const DEFAULT_EVIDENCE_ARTIFACTS = [
@@ -13,6 +13,11 @@ export const DEFAULT_EVIDENCE_ARTIFACTS = [
   'eval-results/final-verification.json',
   'scenario-report.json',
 ] as const;
+
+const DISCOVERED_EVIDENCE_DIRS = ['eval-results', join('state', 'audits')];
+const EXCLUDED_EVIDENCE_ARTIFACTS = new Set([
+  'state/audits/librarian/manifest.json',
+]);
 
 export interface EvidenceArtifactMetadata {
   path: string;
@@ -25,6 +30,12 @@ export interface EvidenceManifest {
   artifacts: EvidenceArtifactMetadata[];
   summary: EvidenceManifestSummary;
 }
+
+type DirectoryEntry = {
+  name: string;
+  isDirectory(): boolean;
+  isFile(): boolean;
+};
 
 const DEFAULT_AB_LIFT_TARGET = 0.2;
 
@@ -57,6 +68,70 @@ function maxTimestamp(values: string[]): string {
 async function readJson<T>(path: string): Promise<T> {
   const raw = await readFile(path, 'utf8');
   return JSON.parse(raw) as T;
+}
+
+function normalizeArtifactPath(relativePath: string): string {
+  return relativePath.split(sep).join('/');
+}
+
+function uniqueSortedArtifacts(paths: string[]): string[] {
+  const unique = new Set<string>();
+  for (const value of paths) {
+    const normalized = normalizeArtifactPath(value);
+    if (EXCLUDED_EVIDENCE_ARTIFACTS.has(normalized)) {
+      continue;
+    }
+    unique.add(normalized);
+  }
+  return Array.from(unique).sort((a, b) => a.localeCompare(b));
+}
+
+async function listFilesRecursive(root: string, relativeDir: string): Promise<string[]> {
+  const absoluteDir = join(root, relativeDir);
+  let entries: DirectoryEntry[];
+
+  try {
+    entries = (await readdir(absoluteDir, { withFileTypes: true, encoding: 'utf8' })) as DirectoryEntry[];
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const relativePath = join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listFilesRecursive(root, relativePath)));
+    } else if (entry.isFile()) {
+      files.push(relativePath);
+    }
+  }
+
+  return files;
+}
+
+async function discoverEvidenceArtifacts(workspaceRoot: string): Promise<string[]> {
+  const discovered: string[] = [];
+
+  for (const dir of DISCOVERED_EVIDENCE_DIRS) {
+    discovered.push(...(await listFilesRecursive(workspaceRoot, dir)));
+  }
+
+  const scenarioPath = join(workspaceRoot, 'scenario-report.json');
+  try {
+    await stat(scenarioPath);
+    discovered.push('scenario-report.json');
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) {
+      throw error;
+    }
+  }
+
+  return discovered;
 }
 
 async function buildEvidenceSummary(workspaceRoot: string, artifacts: EvidenceArtifactMetadata[]): Promise<EvidenceManifestSummary> {
@@ -141,7 +216,11 @@ export async function buildEvidenceManifest(options: {
   workspaceRoot: string;
   artifacts?: readonly string[];
 }): Promise<EvidenceManifest> {
-  const artifacts = options.artifacts ?? DEFAULT_EVIDENCE_ARTIFACTS;
+  const discovered = await discoverEvidenceArtifacts(options.workspaceRoot);
+  const artifacts = uniqueSortedArtifacts([
+    ...(options.artifacts ?? DEFAULT_EVIDENCE_ARTIFACTS),
+    ...discovered,
+  ]);
   const entries: EvidenceArtifactMetadata[] = [];
 
   for (const relativePath of artifacts) {

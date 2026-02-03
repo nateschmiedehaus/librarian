@@ -12,6 +12,8 @@ yarn-error.log*
 pnpm-debug.log*
 eval-results/
 coverage/
-eval-corpus/external-repos/
+eval-corpus/external-repos/*
+!eval-corpus/external-repos/manifest.json
 scenario-report.json
 debug_reach.ts
+.tmp/

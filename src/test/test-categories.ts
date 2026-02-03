@@ -59,10 +59,21 @@ export const TEST_CATEGORIES: Record<TestCategory, TestCategoryConfig> = {
   heavy: {
     patterns: [
       '**/ground_truth_corpus_complete.test.ts',
+      '**/ground_truth_generator.test.ts',
       '**/validation_phases_18_22.test.ts',
       '**/scenario_families.test.ts',
+      '**/reachability_analysis.test.ts',
       '**/reachability_analyzer.test.ts',
       '**/dead_code_detector.test.ts',
+      '**/comment_code_checker.test.ts',
+      '**/entailment_checker.test.ts',
+      '**/quality_disclosure.test.ts',
+      '**/adaptive_synthesis.test.ts',
+      '**/quality_prediction.test.ts',
+      '**/symbol_verifier.test.ts',
+      '**/citation_verifier.test.ts',
+      '**/code_property_graph.test.ts',
+      '**/red_flag_detector.test.ts',
     ],
     maxConcurrentFiles: 1, // Only one heavy test at a time
     memoryMultiplier: 10, // These use 10x more memory

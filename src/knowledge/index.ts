@@ -147,7 +147,7 @@ export type {
   QualityScore,
 } from './quality.js';
 
-export { PatternKnowledge } from './patterns.js';
+export { PatternKnowledge, T_PATTERN_REGISTRY } from './patterns.js';
 export type {
   PatternQuery,
   PatternResult,
@@ -156,7 +156,40 @@ export type {
   NamingConvention,
   PatternOccurrence,
   PatternLLMConfig,
+  TPatternAnalysisResult,
 } from './patterns.js';
+
+// Re-export T-pattern utilities
+export {
+  analyzeAllTPatterns,
+  analyzeT01FunctionByName,
+  analyzeT02SemanticSearch,
+  analyzeT03CallGraph,
+  analyzeT04DependencyGraph,
+  analyzeT05InterfaceImplementation,
+  analyzeT06TestMapping,
+  analyzeT07FunctionPurpose,
+  analyzeT08ModuleArchitecture,
+  analyzeT09DesignPatterns,
+  analyzeT10ErrorHandling,
+  analyzeT11DataFlow,
+  analyzeT12SideEffects,
+  analyzeT13UsageAnalysis,
+  analyzeT14BreakingChanges,
+  analyzeT15SimilarPatterns,
+  analyzeT16FeatureLocation,
+  analyzeT17TestGaps,
+  analyzeT18Configuration,
+  analyzeT19ErrorSource,
+  analyzeT20RelatedBugs,
+  analyzeT21RaceConditions,
+  analyzeT22NullHazards,
+  analyzeT23ExceptionPropagation,
+  analyzeT24DeadCode,
+  analyzeT28PerformanceAntiPatterns,
+  analyzeT29CircularDependencies,
+  type TPatternDefinition,
+} from './t_patterns.js';
 
 export { StructureKnowledge } from './structure.js';
 export type {
@@ -169,6 +202,20 @@ export type {
   FileTypeBreakdown,
 } from './structure.js';
 
+// Entry point detection
+export {
+  detectEntryPoints,
+  isEntryPointQuery,
+  scoreEntryPointForQuery,
+  ENTRY_POINT_QUERY_PATTERNS,
+} from './entry_point_detector.js';
+export type {
+  DetectedEntryPoint,
+  EntryPointKind,
+  EntryPointDetectionResult,
+  EntryPointDetectionOptions,
+} from './entry_point_detector.js';
+
 export { EvolutionKnowledge } from './evolution.js';
 export type {
   EvolutionQuery,
@@ -178,6 +225,46 @@ export type {
   OptimizationOpportunity,
   TaskOutcome,
 } from './evolution.js';
+
+// Re-export durability classification system
+export {
+  FileDurability,
+  classifyDurability,
+  isImmutablePath,
+  shouldRevalidate,
+  getRevalidationPriority,
+  getRevalidationDecision,
+  createEmptyStats,
+  updateStats,
+  calculateSkipPercentage,
+  classifyBatch,
+  DurabilityTracker,
+  createDurabilityTracker,
+  DEFAULT_DURABILITY_CONFIG,
+  REVALIDATION_PRIORITY,
+} from './durability.js';
+export type {
+  DurabilityConfig,
+  DurabilityStats,
+  RevalidationDecision,
+  FileInfo,
+  BatchClassificationResult,
+} from './durability.js';
+
+// Re-export code pattern library for agents
+export {
+  PatternLibrary,
+  isCodePatternQuery,
+  extractPatternCategory,
+  handleCodePatternQuery,
+  CODE_PATTERN_QUERY_PATTERNS,
+} from './code_patterns.js';
+export type {
+  CodePattern,
+  PatternCategory,
+  PatternQueryResult,
+  PatternLibraryBuildOptions,
+} from './code_patterns.js';
 
 import type { ArchitectureQuery, ArchitectureResult } from './architecture.js';
 import type { ImpactQuery, ImpactResult } from './impact.js';

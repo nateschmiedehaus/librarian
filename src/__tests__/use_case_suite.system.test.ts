@@ -20,7 +20,7 @@ import { requireProviders } from '../api/provider_check.js';
 import type { LibrarianStorage } from '../storage/types.js';
 import type { LibrarianResponse } from '../types.js';
 
-const TEST_FIXTURE_PATH = path.resolve(__dirname, '../../../../test/fixtures/librarian_usecase');
+const TEST_FIXTURE_PATH = path.resolve(__dirname, '../../test/fixtures/librarian_usecase');
 const HAS_FIXTURE = fsSync.existsSync(TEST_FIXTURE_PATH);
 const describeFixture = HAS_FIXTURE ? describe : describe.skip;
 

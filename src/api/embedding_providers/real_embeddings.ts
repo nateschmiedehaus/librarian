@@ -96,6 +96,27 @@ export function getCurrentModel(): EmbeddingModelId {
 }
 
 /**
+ * Check if the embedding model is already loaded for the current model.
+ */
+export function isModelLoaded(modelId: EmbeddingModelId = currentModelId): boolean {
+  const model = EMBEDDING_MODELS[modelId];
+  return pipelines.has(model.xenovaId);
+}
+
+/**
+ * Preload the embedding model to avoid cold-start latency on first query.
+ * This should be called during bootstrap after storage initialization.
+ *
+ * @returns Promise that resolves when the model is loaded
+ */
+export async function preloadEmbeddingModel(modelId: EmbeddingModelId = currentModelId): Promise<void> {
+  if (isModelLoaded(modelId)) {
+    return;
+  }
+  await getXenovaPipeline(modelId);
+}
+
+/**
  * Initialize the @xenova/transformers pipeline for a specific model.
  * This is lazy-loaded on first use to avoid slow startup.
  */

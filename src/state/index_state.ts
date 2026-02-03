@@ -88,21 +88,46 @@ export function isReadyPhase(phase: IndexPhase): boolean {
   return phase === 'ready' || phase === 'incremental';
 }
 
+/** Default timeout for waiting for index to become ready (30 seconds) */
+export const DEFAULT_INDEX_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * Error thrown when waiting for index ready times out
+ */
+export class IndexNotReadyError extends Error {
+  readonly phase: IndexPhase;
+  readonly elapsedMs: number;
+
+  constructor(phase: IndexPhase, elapsedMs: number) {
+    super(
+      `Bootstrap incomplete. Index phase is '${phase}' after ${Math.round(elapsedMs / 1000)}s. ` +
+      `Run \`librarian bootstrap\` first.`
+    );
+    this.name = 'IndexNotReadyError';
+    this.phase = phase;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
 export async function waitForIndexReady(
   storage: LibrarianStorage,
   options: { timeoutMs?: number; pollIntervalMs?: number } = {}
 ): Promise<IndexState> {
-  const timeoutMs = options.timeoutMs ?? 0;
+  // Default to 30 seconds instead of infinite wait (0)
+  const timeoutMs = options.timeoutMs ?? DEFAULT_INDEX_READY_TIMEOUT_MS;
   const pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 250);
   const startedAt = Date.now();
   let state = await getIndexState(storage);
   if (isReadyPhase(state.phase)) return state;
 
+  // Only allow infinite wait if explicitly requested with timeoutMs <= 0
   while (timeoutMs <= 0 || Date.now() - startedAt < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     state = await getIndexState(storage);
     if (isReadyPhase(state.phase)) return state;
   }
 
-  return state;
+  // Timeout occurred - throw error with clear message
+  const elapsedMs = Date.now() - startedAt;
+  throw new IndexNotReadyError(state.phase, elapsedMs);
 }

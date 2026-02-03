@@ -66,6 +66,14 @@ export interface HomeostasisDaemonConfig {
   onRecoveryComplete?: (record: HealingRecord) => void;
   /** Recovery learner instance (optional, will create if not provided) */
   recoveryLearner?: RecoveryLearner;
+  /** Enable config self-healing (requires workspace path) */
+  enableConfigHealing?: boolean;
+  /** Workspace path for config healing */
+  workspacePath?: string;
+  /** Config healing check interval in ms (default: 1 hour) */
+  configHealingIntervalMs?: number;
+  /** Config health threshold to trigger healing (default: 0.7) */
+  configHealingThreshold?: number;
 }
 
 /**
@@ -133,6 +141,13 @@ export interface DaemonStatus {
   lastHealing?: HealingRecord;
   /** Started at */
   startedAt?: Date;
+  /** Config healing status */
+  configHealing?: {
+    enabled: boolean;
+    lastCheck?: Date;
+    lastHealthScore?: number;
+    healingsApplied: number;
+  };
 }
 
 // ============================================================================
@@ -146,6 +161,10 @@ const DEFAULT_CONFIG = {
   autoStart: false,
   onHealthCheckTriggered: undefined as ((trigger: TriggeredHealthCheck) => void) | undefined,
   onRecoveryComplete: undefined as ((record: HealingRecord) => void) | undefined,
+  enableConfigHealing: false,
+  workspacePath: undefined as string | undefined,
+  configHealingIntervalMs: 60 * 60 * 1000, // 1 hour
+  configHealingThreshold: 0.7,
 };
 
 // ============================================================================
@@ -170,6 +189,15 @@ export class HomeostasisDaemon {
   private healingHistory: HealingRecord[] = [];
   private healingQueue: TriggeredHealthCheck[] = [];
   private processingQueue = false;
+
+  // Config healing state
+  private configHealingTrigger: ReturnType<typeof import('../config/self_healing.js').createConfigHealingTrigger> | null = null;
+  private configHealingStats = {
+    enabled: false,
+    lastCheck: undefined as Date | undefined,
+    lastHealthScore: undefined as number | undefined,
+    healingsApplied: 0,
+  };
 
   constructor(config: HomeostasisDaemonConfig) {
     this.storage = config.storage;
@@ -207,7 +235,70 @@ export class HomeostasisDaemon {
       void this.onTrigger(trigger);
     });
 
-    logInfo('[homeostasis] Daemon started', { startedAt: this.startedAt.toISOString() });
+    // Start config healing if enabled
+    if (this.config.enableConfigHealing && this.config.workspacePath) {
+      await this.startConfigHealing();
+    }
+
+    logInfo('[homeostasis] Daemon started', {
+      startedAt: this.startedAt.toISOString(),
+      configHealingEnabled: this.configHealingStats.enabled,
+    });
+  }
+
+  /**
+   * Start config self-healing subsystem.
+   */
+  private async startConfigHealing(): Promise<void> {
+    if (!this.config.workspacePath) return;
+
+    try {
+      // Dynamic import to avoid circular dependencies
+      const { createConfigHealingTrigger } = await import('../config/self_healing.js');
+
+      this.configHealingTrigger = createConfigHealingTrigger(this.config.workspacePath, {
+        checkIntervalMs: this.config.configHealingIntervalMs,
+        autoHealThreshold: this.config.configHealingThreshold,
+        riskTolerance: 'low',
+      });
+
+      this.configHealingTrigger.start();
+      this.configHealingStats.enabled = true;
+
+      logInfo('[homeostasis] Config healing started', {
+        workspace: this.config.workspacePath,
+        intervalMs: this.config.configHealingIntervalMs,
+        threshold: this.config.configHealingThreshold,
+      });
+    } catch (error) {
+      logWarning('[homeostasis] Failed to start config healing', {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
+   * Trigger a config health check manually.
+   */
+  async triggerConfigHealthCheck(): Promise<void> {
+    if (!this.configHealingTrigger) {
+      logWarning('[homeostasis] Config healing not enabled');
+      return;
+    }
+
+    try {
+      const report = await this.configHealingTrigger.triggerCheck();
+      this.configHealingStats.lastCheck = new Date();
+      this.configHealingStats.lastHealthScore = report.healthScore;
+
+      if (report.autoFixable.length > 0 && report.healthScore < (this.config.configHealingThreshold ?? 0.7)) {
+        this.configHealingStats.healingsApplied++;
+      }
+    } catch (error) {
+      logError('[homeostasis] Config health check failed', {
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   /**
@@ -217,6 +308,13 @@ export class HomeostasisDaemon {
     if (!this.running) return;
 
     this.running = false;
+
+    // Stop config healing
+    if (this.configHealingTrigger) {
+      this.configHealingTrigger.stop();
+      this.configHealingTrigger = null;
+      this.configHealingStats.enabled = false;
+    }
 
     // Unwire triggers
     if (this.triggerWiring) {
@@ -241,6 +339,12 @@ export class HomeostasisDaemon {
       healingsCompleted: this.healingsCompleted,
       lastHealing: this.healingHistory[this.healingHistory.length - 1],
       startedAt: this.startedAt,
+      configHealing: this.configHealingStats.enabled ? {
+        enabled: this.configHealingStats.enabled,
+        lastCheck: this.configHealingStats.lastCheck,
+        lastHealthScore: this.configHealingStats.lastHealthScore,
+        healingsApplied: this.configHealingStats.healingsApplied,
+      } : undefined,
     };
   }
 

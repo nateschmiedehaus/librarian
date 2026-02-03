@@ -57,6 +57,7 @@ import type { VerificationPlan } from '../strategic/verification_plan.js';
 import type { Episode } from '../strategic/building_blocks.js';
 import { SqliteEvidenceLedger } from '../epistemics/evidence_ledger.js';
 import { enableEventLedgerBridge, disableEventLedgerBridge } from '../epistemics/event_ledger_bridge.js';
+import { initStageCalibration } from './stage_calibration.js';
 import {
   listVerificationPlans,
   getVerificationPlan,
@@ -118,6 +119,7 @@ import {
   createEntityCreatedEvent,
   createEntityUpdatedEvent,
   createUnderstandingInvalidatedEvent,
+  createFeedbackReceivedEvent,
 } from '../events.js';
 import { bayesianDelta } from '../knowledge/confidence_updater.js';
 import { LibrarianViewsDelegate, type PersonaType } from './librarian_views.js';
@@ -126,7 +128,14 @@ import type { DiagramRequest, DiagramResult } from '../visualization/mermaid_gen
 import type { ASCIIResult } from '../visualization/ascii_diagrams.js';
 import type { ActivationSummary } from '../knowledge/defeater_activation.js';
 import type { RefactoringRecommendation } from '../recommendations/refactoring_advisor.js';
-import { logWarning } from '../telemetry/logger.js';
+import { logWarning, logInfo } from '../telemetry/logger.js';
+import { getErrorMessage } from '../utils/errors.js';
+import {
+  diagnoseConfiguration,
+  autoHealConfiguration,
+  type ConfigHealthReport,
+  type HealingResult,
+} from '../config/self_healing.js';
 
 export interface LibrarianConfig {
   workspace: string;
@@ -134,12 +143,30 @@ export interface LibrarianConfig {
   autoBootstrap: boolean;
   /** Start file watcher after bootstrap to keep index updated on code changes */
   autoWatch?: boolean;
+  /**
+   * Automatically heal configuration issues on startup.
+   * When enabled, diagnoses and fixes common config problems like:
+   * - Configuration drift from codebase changes
+   * - Stale settings
+   * - Suboptimal performance configurations
+   *
+   * Defaults to false for backward compatibility.
+   */
+  autoHealConfig?: boolean;
+  /**
+   * Risk tolerance for auto-healing configuration.
+   * - 'safe': Only apply guaranteed-safe fixes
+   * - 'low': Apply safe and low-risk fixes (default when autoHealConfig is true)
+   * - 'medium': Apply safe, low, and medium-risk fixes
+   */
+  autoHealRiskTolerance?: 'safe' | 'low' | 'medium';
   bootstrapConfig?: Partial<BootstrapConfig>;
   // 0 or undefined means no timeout (preferred)
   bootstrapTimeoutMs?: number;
   onProgress?: (phase: string, progress: number, message: string) => void;
   onBootstrapStart?: () => void;
   onBootstrapComplete?: (report: BootstrapReport) => void;
+  onConfigHealed?: (result: HealingResult) => void;
 
   llmProvider?: 'claude' | 'codex';
   llmModelId?: string;
@@ -227,6 +254,8 @@ export class Librarian {
       this.evidenceLedger = new SqliteEvidenceLedger(ledgerPath);
       await this.evidenceLedger.initialize();
       enableEventLedgerBridge({ ledger: this.evidenceLedger });
+      // Initialize stage calibration with evidence ledger for persistence
+      initStageCalibration(this.evidenceLedger);
     } catch (error) {
       this.evidenceLedger = null;
       logWarning('Evidence ledger initialization failed; replay unavailable.', {
@@ -234,6 +263,8 @@ export class Librarian {
         workspace: this.config.workspace,
         error: error instanceof Error ? error.message : String(error),
       });
+      // Initialize stage calibration without persistence
+      initStageCalibration();
     }
     try {
       this.storageCapabilities = this.storage.getCapabilities();
@@ -294,8 +325,48 @@ export class Librarian {
 
     this.initialized = true;
 
+    // Auto-heal configuration if enabled
+    if (this.config.autoHealConfig) {
+      try {
+        const healthReport = await diagnoseConfiguration(this.config.workspace);
+
+        if (!healthReport.isOptimal && healthReport.autoFixable.length > 0) {
+          logInfo('[librarian] Configuration issues detected, attempting auto-heal', {
+            workspace: this.config.workspace,
+            healthScore: healthReport.healthScore,
+            issueCount: healthReport.issues.length,
+            autoFixableCount: healthReport.autoFixable.length,
+          });
+
+          const healResult = await autoHealConfiguration(this.config.workspace, {
+            riskTolerance: this.config.autoHealRiskTolerance ?? 'low',
+          });
+
+          if (healResult.appliedFixes.length > 0) {
+            logInfo('[librarian] Configuration auto-healed', {
+              workspace: this.config.workspace,
+              appliedFixes: healResult.appliedFixes.length,
+              newHealthScore: healResult.newHealthScore,
+            });
+          }
+
+          this.config.onConfigHealed?.(healResult);
+        }
+      } catch (error) {
+        // Config healing failure is non-fatal - log and continue
+        logWarning('[librarian] Config auto-heal failed, continuing with existing config', {
+          workspace: this.config.workspace,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
     // Check bootstrap status regardless of autoBootstrap setting
-    const { required, reason } = await isBootstrapRequired(this.config.workspace, this.storage);
+    // Detect current tier from stored data and use that as target to allow operation
+    // on existing data. Only request upgrade if explicitly configured.
+    const currentVersion = await detectLibrarianVersion(this.storage);
+    const effectiveTier = this.config.bootstrapConfig?.bootstrapMode === 'full' ? 'full' : (currentVersion?.qualityTier ?? 'full');
+    const { required, reason } = await isBootstrapRequired(this.config.workspace, this.storage, { targetQualityTier: effectiveTier });
 
     if (required && this.config.autoBootstrap) {
       // Auto-bootstrap is enabled and bootstrap is required
@@ -412,6 +483,33 @@ export class Librarian {
     const watchHealth = deriveWatchHealth(watchState);
     const headSha = await getCurrentGitSha(this.config.workspace);
     return deriveSelfDiagnosis({ headSha, watchState, watchHealth });
+  }
+
+  /**
+   * Diagnose configuration health and identify issues.
+   * Returns a health report with detected issues, recommendations, and auto-fixable items.
+   */
+  async diagnoseConfig(): Promise<ConfigHealthReport> {
+    return diagnoseConfiguration(this.config.workspace);
+  }
+
+  /**
+   * Manually trigger configuration auto-healing.
+   * Useful when issues are detected and you want to fix them without restarting.
+   *
+   * @param options - Healing options
+   * @param options.dryRun - If true, show what would be fixed without applying changes
+   * @param options.riskTolerance - Maximum risk level of fixes to apply
+   * @returns Result of the healing operation
+   */
+  async healConfig(options: {
+    dryRun?: boolean;
+    riskTolerance?: 'safe' | 'low' | 'medium';
+  } = {}): Promise<HealingResult> {
+    return autoHealConfiguration(this.config.workspace, {
+      dryRun: options.dryRun,
+      riskTolerance: options.riskTolerance ?? 'low',
+    });
   }
 
   async saveVerificationPlan(plan: VerificationPlan): Promise<void> {
@@ -853,6 +951,46 @@ export class Librarian {
     await this.storage!.updateConfidence(packId, 'context_pack', delta, outcome);
   }
 
+  /**
+   * Record a task outcome with full details for calibration.
+   *
+   * This method:
+   * 1. Records outcomes for all context packs used
+   * 2. Updates confidence scores using Bayesian updates
+   * 3. Feeds the calibration system for accuracy tracking
+   * 4. Triggers re-indexing of modified files
+   *
+   * @param outcome - Task outcome details
+   */
+  async recordTaskOutcome(outcome: {
+    taskId?: string;
+    success: boolean;
+    packIds: string[];
+    filesModified?: string[];
+    failureReason?: string;
+    failureType?: string;
+    intent?: string;
+  }): Promise<void> {
+    this.ensureReady();
+
+    // Record outcome for each pack
+    const outcomeType = outcome.success ? 'success' : 'failure';
+    for (const packId of outcome.packIds) {
+      await this.recordOutcome(packId, outcomeType);
+    }
+
+    // Trigger re-indexing for modified files
+    if (outcome.filesModified && outcome.filesModified.length > 0) {
+      await this.reindexFiles(outcome.filesModified);
+    }
+
+    // Emit feedback event for monitoring
+    const taskId = outcome.taskId ?? `task_${Date.now()}`;
+    void globalEventBus.emit(
+      createFeedbackReceivedEvent(taskId, outcome.success, outcome.packIds, outcome.failureReason)
+    );
+  }
+
   async reindexFiles(filePaths: string[]): Promise<void> {
     this.ensureReady();
 
@@ -989,7 +1127,10 @@ export class Librarian {
       }
 
       if (directoryPaths.size) {
-        const knownFiles = await this.storage!.getFiles().catch(() => []);
+        const knownFiles = await this.storage!.getFiles().catch((err) => {
+          logWarning('[librarian] Failed to retrieve known files for directory processing', { error: getErrorMessage(err) });
+          return [];
+        });
         const knownPaths = knownFiles.map((file) => file.path);
         const totalFileCounts = computeTotalFileCounts(
           knownPaths.length ? knownPaths : normalizedPaths,

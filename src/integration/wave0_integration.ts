@@ -53,6 +53,8 @@ export async function enrichTaskContext(
     waitForIndexMs?: number;
     taskId?: string;
     ucRequirements?: string[];
+    /** Enabled constructables from session config for routing */
+    enabledConstructables?: string[];
   }
 ): Promise<LibrarianContext> {
   if (isDeterministicMode()) {
@@ -77,6 +79,7 @@ export async function enrichTaskContext(
       depth: 'L1',
       waitForIndexMs,
       ucRequirements: query.ucRequirements ? { ucIds: query.ucRequirements } : undefined,
+      enabledConstructables: query.enabledConstructables,
     });
 
     // Emit integration:context event when context is provided

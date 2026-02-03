@@ -75,9 +75,12 @@ export {
   // Per VISION architecture, rationale claims require LLM synthesis.
   // Use extractRationaleWithLLM for all production use.
   extractRationaleWithLLM,
+  // Argument edge generation from rationale (can be used independently)
+  generateArgumentEdges,
   type RationaleExtraction,
   type RationaleInput,
   type LLMRationaleConfig,
+  type ArgumentEdgeGenerationOptions,
 } from './rationale_extractor.js';
 
 // Traceability Extractor

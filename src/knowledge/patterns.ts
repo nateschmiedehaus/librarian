@@ -20,10 +20,51 @@
 import type { LibrarianStorage, FunctionKnowledge, ModuleKnowledge } from '../storage/types.js';
 import { computeGraphMetrics } from '../graphs/metrics.js';
 import { buildModuleGraphs } from './module_graph.js';
-import { analyzeAsyncPatterns, analyzeErrorHandlingPatterns, analyzeTestingPatterns } from './pattern_behavior.js';
+import {
+  analyzeAsyncPatterns,
+  analyzeErrorHandlingPatterns,
+  analyzeTestingPatterns,
+  analyzeMetaprogrammingPatterns,
+  analyzeFrameworkPatterns,
+  analyzeLegacyPatterns,
+} from './pattern_behavior.js';
 import { analyzeNamingConventions, analyzeTeamStylePatterns } from './pattern_naming.js';
+import {
+  analyzeAllTPatterns,
+  analyzeT01FunctionByName,
+  analyzeT02SemanticSearch,
+  analyzeT03CallGraph,
+  analyzeT04DependencyGraph,
+  analyzeT05InterfaceImplementation,
+  analyzeT06TestMapping,
+  analyzeT07FunctionPurpose,
+  analyzeT08ModuleArchitecture,
+  analyzeT09DesignPatterns,
+  analyzeT10ErrorHandling,
+  analyzeT11DataFlow,
+  analyzeT12SideEffects,
+  analyzeT13UsageAnalysis,
+  analyzeT14BreakingChanges,
+  analyzeT15SimilarPatterns,
+  analyzeT16FeatureLocation,
+  analyzeT17TestGaps,
+  analyzeT18Configuration,
+  analyzeT19ErrorSource,
+  analyzeT20RelatedBugs,
+  analyzeT21RaceConditions,
+  analyzeT22NullHazards,
+  analyzeT23ExceptionPropagation,
+  analyzeT24DeadCode,
+  analyzeT28PerformanceAntiPatterns,
+  analyzeT29CircularDependencies,
+  T_PATTERN_REGISTRY,
+  type TPatternAnalysisResult,
+} from './t_patterns.js';
 import { resolveLlmServiceAdapter } from '../adapters/llm_service.js';
 import { resolveLibrarianModelId } from '../api/llm_env.js';
+
+// Re-export T-pattern types and registry for external use
+export { T_PATTERN_REGISTRY, type TPatternAnalysisResult };
 
 // ============================================================================
 // TYPES
@@ -31,18 +72,31 @@ import { resolveLibrarianModelId } from '../api/llm_env.js';
 
 export interface PatternQuery {
   type:
-    | 'design_patterns'   // Classic design patterns
-    | 'anti_patterns'     // Anti-patterns and smells
-    | 'naming'            // Naming conventions
-    | 'team_style'        // Team coding style
-    | 'recurring'         // Recurring code structures
-    | 'emergent'          // Emergent patterns
-    | 'error_handling'    // Error handling patterns
-    | 'async_patterns'    // Async/await patterns
-    | 'testing_patterns'; // Testing patterns
+    | 'design_patterns'      // Classic design patterns
+    | 'anti_patterns'        // Anti-patterns and smells
+    | 'naming'               // Naming conventions
+    | 'team_style'           // Team coding style
+    | 'recurring'            // Recurring code structures
+    | 'emergent'             // Emergent patterns
+    | 'error_handling'       // Error handling patterns
+    | 'async_patterns'       // Async/await patterns
+    | 'testing_patterns'     // Testing patterns
+    | 'metaprogramming'      // T-25: Dynamic metaprogramming patterns
+    | 'framework_patterns'   // T-26: Framework magic (ORM, DI)
+    | 'legacy_patterns'      // T-30: Legacy code markers
+    // T-Series Pattern Categories (T-01 to T-30)
+    | 'navigation'           // T-01 to T-06: Code navigation
+    | 'understanding'        // T-07 to T-12: Code understanding
+    | 'modification'         // T-13 to T-18: Modification support
+    | 'bug_investigation'    // T-19 to T-24: Bug investigation
+    | 'performance'          // T-28: Performance anti-patterns
+    | 'circular_deps'        // T-29: Circular dependency analysis
+    | 'all_t_patterns';      // Complete T-01 to T-30 analysis
 
   target?: string;
   minOccurrences?: number;
+  /** For legacy patterns: workspace root for git operations */
+  workspaceRoot?: string;
 }
 
 export interface PatternResult {
@@ -195,6 +249,27 @@ export class PatternKnowledge {
         return this.analyzeAsyncPatterns(q);
       case 'testing_patterns':
         return this.analyzeTestingPatterns(q);
+      case 'metaprogramming':
+        return this.analyzeMetaprogramming(q);
+      case 'framework_patterns':
+        return this.analyzeFrameworkPatterns(q);
+      case 'legacy_patterns':
+        return this.analyzeLegacyPatterns(q);
+      // T-Series Pattern Categories
+      case 'navigation':
+        return this.analyzeNavigationPatterns(q);
+      case 'understanding':
+        return this.analyzeUnderstandingPatterns(q);
+      case 'modification':
+        return this.analyzeModificationPatterns(q);
+      case 'bug_investigation':
+        return this.analyzeBugInvestigationPatterns(q);
+      case 'performance':
+        return this.analyzePerformancePatterns(q);
+      case 'circular_deps':
+        return this.analyzeCircularDependencies(q);
+      case 'all_t_patterns':
+        return this.analyzeAllTPatterns(q);
       default:
         return { query: q, summary: 'Unknown query type', recommendations: [] };
     }
@@ -497,6 +572,179 @@ export class PatternKnowledge {
   private async analyzeTestingPatterns(query: PatternQuery): Promise<PatternResult> {
     const functions = await this.storage.getFunctions();
     return analyzeTestingPatterns(functions, query);
+  }
+
+  /**
+   * T-25: Analyze metaprogramming patterns (decorators, Proxy, Reflect, eval, dynamic imports)
+   */
+  private async analyzeMetaprogramming(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+    return analyzeMetaprogrammingPatterns(functions, modules, query);
+  }
+
+  /**
+   * T-26: Analyze framework-specific patterns (NestJS DI, TypeORM, Prisma)
+   */
+  private async analyzeFrameworkPatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+    return analyzeFrameworkPatterns(functions, modules, query);
+  }
+
+  /**
+   * T-30: Analyze legacy code markers (deprecated APIs, old syntax, TODO density)
+   */
+  private async analyzeLegacyPatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+    return analyzeLegacyPatterns(functions, modules, query);
+  }
+
+  // ==========================================================================
+  // T-SERIES PATTERN ANALYSIS (T-01 to T-30)
+  // ==========================================================================
+
+  /**
+   * T-01 to T-06: Navigation patterns
+   * Find functions by name, semantic search, call graph, dependency graph, interfaces, test mapping
+   */
+  private async analyzeNavigationPatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+
+    const results = [
+      analyzeT01FunctionByName(functions, query),
+      analyzeT02SemanticSearch(functions, query),
+      analyzeT03CallGraph(functions, modules, query),
+      analyzeT04DependencyGraph(modules, query),
+      analyzeT05InterfaceImplementation(functions, modules, query),
+      analyzeT06TestMapping(modules, query),
+    ];
+
+    return this.mergePatternResults(results, query, 'Navigation patterns (T-01 to T-06)');
+  }
+
+  /**
+   * T-07 to T-12: Understanding patterns
+   * Function purpose, module architecture, design patterns, error handling, data flow, side effects
+   */
+  private async analyzeUnderstandingPatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+
+    const results = [
+      analyzeT07FunctionPurpose(functions, query),
+      analyzeT08ModuleArchitecture(modules, query),
+      analyzeT09DesignPatterns(functions, modules, query),
+      analyzeT10ErrorHandling(functions, query),
+      analyzeT11DataFlow(functions, modules, query),
+      analyzeT12SideEffects(functions, query),
+    ];
+
+    return this.mergePatternResults(results, query, 'Understanding patterns (T-07 to T-12)');
+  }
+
+  /**
+   * T-13 to T-18: Modification support patterns
+   * Usage analysis, breaking changes, similar patterns, feature location, test gaps, configuration
+   */
+  private async analyzeModificationPatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+
+    const results = [
+      analyzeT13UsageAnalysis(functions, modules, query),
+      analyzeT14BreakingChanges(functions, modules, query),
+      analyzeT15SimilarPatterns(functions, query),
+      analyzeT16FeatureLocation(modules, query),
+      analyzeT17TestGaps(functions, modules, query),
+      analyzeT18Configuration(modules, query),
+    ];
+
+    return this.mergePatternResults(results, query, 'Modification support patterns (T-13 to T-18)');
+  }
+
+  /**
+   * T-19 to T-24: Bug investigation patterns
+   * Error source, related bugs, race conditions, null hazards, exception propagation, dead code
+   */
+  private async analyzeBugInvestigationPatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+
+    const results = [
+      analyzeT19ErrorSource(functions, modules, query),
+      analyzeT20RelatedBugs(functions, query),
+      analyzeT21RaceConditions(functions, query),
+      analyzeT22NullHazards(functions, query),
+      analyzeT23ExceptionPropagation(functions, modules, query),
+      analyzeT24DeadCode(functions, modules, query),
+    ];
+
+    return this.mergePatternResults(results, query, 'Bug investigation patterns (T-19 to T-24)');
+  }
+
+  /**
+   * T-28: Performance anti-pattern detection
+   */
+  private async analyzePerformancePatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+    return analyzeT28PerformanceAntiPatterns(functions, modules, query);
+  }
+
+  /**
+   * T-29: Circular dependency analysis
+   */
+  private async analyzeCircularDependencies(query: PatternQuery): Promise<PatternResult> {
+    const modules = await this.storage.getModules();
+    return analyzeT29CircularDependencies(modules, query);
+  }
+
+  /**
+   * Complete T-01 to T-30 analysis
+   * Runs all T-pattern analyzers and returns comprehensive results
+   */
+  private async analyzeAllTPatterns(query: PatternQuery): Promise<PatternResult> {
+    const functions = await this.storage.getFunctions();
+    const modules = await this.storage.getModules();
+    const result = analyzeAllTPatterns(functions, modules, query);
+
+    return {
+      query,
+      patterns: result.patterns,
+      antiPatterns: result.antiPatterns,
+      summary: result.summary,
+      recommendations: result.recommendations,
+    };
+  }
+
+  /**
+   * Helper to merge multiple pattern results into one
+   */
+  private mergePatternResults(
+    results: PatternResult[],
+    query: PatternQuery,
+    summary: string
+  ): PatternResult {
+    const patterns: DetectedPattern[] = [];
+    const antiPatterns: DetectedAntiPattern[] = [];
+    const recommendations: string[] = [];
+
+    for (const result of results) {
+      if (result.patterns) patterns.push(...result.patterns);
+      if (result.antiPatterns) antiPatterns.push(...result.antiPatterns);
+      recommendations.push(...result.recommendations);
+    }
+
+    return {
+      query,
+      patterns,
+      antiPatterns,
+      summary,
+      recommendations: [...new Set(recommendations)],
+    };
   }
 }
 

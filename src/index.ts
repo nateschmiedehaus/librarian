@@ -45,6 +45,45 @@
 // PUBLIC API SURFACE
 // ============================================================================
 
+// ============================================================================
+// PRIMARY ENTRY POINT - USE THIS
+// ============================================================================
+//
+// The recommended way to use Librarian is through the unified orchestrator:
+//
+//   import { initializeLibrarian } from 'librarian';
+//
+//   const session = await initializeLibrarian(workspace);
+//   const context = await session.query('How does auth work?');
+//   await session.recordOutcome({ success: true, packIds: context.packIds });
+//
+// This single function handles:
+// - Bootstrap if needed
+// - Optimal tier selection (always 'full')
+// - Background file watching
+// - Self-healing recovery loop
+// - Simple session interface
+//
+export {
+  initializeLibrarian,
+  hasSession,
+  getSession,
+  shutdownAllSessions,
+  getActiveSessionCount,
+} from './orchestrator/index.js';
+export type {
+  LibrarianSession,
+  TaskResult,
+  HealthReport,
+  Context,
+  InitializeOptions,
+  QueryOptions,
+} from './orchestrator/index.js';
+
+// ============================================================================
+// LOWER-LEVEL APIs (for advanced use cases)
+// ============================================================================
+
 // Core librarian interface
 export { Librarian, createLibrarian, createLibrarianSync } from './api/librarian.js';
 export type { LibrarianConfig, LibrarianStatus } from './api/librarian.js';
@@ -67,6 +106,14 @@ export type {
   ExecutionPipelineResult,
 } from './api/execution_pipeline.js';
 export { applyCalibrationToPacks, computeUncertaintyMetrics, getConfidenceCalibration, summarizeCalibration } from './api/confidence_calibration.js';
+export {
+  enforceResponseTokenBudget,
+  hasValidTokenBudget,
+  estimateTokens,
+  estimatePackTokens,
+  estimateSynthesisTokens,
+} from './api/token_budget.js';
+export type { ResponseBudgetInput, ResponseBudgetOutput } from './api/token_budget.js';
 export {
   ASPECT_TO_PRIMITIVES,
   decomposeToAspects,
@@ -148,6 +195,24 @@ export type { UpgradeReport } from './api/versioning.js';
 // Storage interface (for custom backends)
 export type { LibrarianStorage, StorageBackend, StorageCapabilities, StorageStats } from './storage/types.js';
 export { createSqliteStorage, createStorageFromBackend } from './storage/sqlite_storage.js';
+
+// Tiered Bootstrap (progressive initialization for fast startup)
+export {
+  TieredBootstrap,
+  createTieredBootstrap,
+  BootstrapTier,
+  FEATURES as BOOTSTRAP_FEATURES,
+  TIER_FEATURES,
+} from './bootstrap/index.js';
+export type {
+  TieredBootstrapOptions,
+  TierStats,
+  BootstrapStatus as TieredBootstrapStatus,
+  DiscoveredFile,
+  ExtractedSymbol,
+  ImportEdge,
+  FeatureId,
+} from './bootstrap/index.js';
 
 // Extension points
 export type {
@@ -563,6 +628,25 @@ export type {
   RecoveryStatus,
 } from './integration/index.js';
 
+// Automatic Feedback Loop for Calibration
+export {
+  FeedbackLoop,
+  createFeedbackLoop,
+  initFeedbackLoop,
+  getFeedbackLoop,
+  recordOutcome,
+  startTask,
+  recordSignal,
+  analyzeBias,
+  inferOutcomeFromToolOutput,
+} from './integration/index.js';
+export type {
+  FeedbackTaskOutcome,
+  CompletionSignal,
+  FeedbackLoopConfig,
+  BiasAnalysis,
+} from './integration/index.js';
+
 // Confidence & Defeaters
 export { bayesianUpdate, bayesianDelta, calculateCalibration, CONFIDENCE_CONFIGS } from './knowledge/confidence_updater.js';
 export { applyDefeaterResults, createDefeater } from './knowledge/defeater_activation.js';
@@ -577,6 +661,26 @@ export { generateMermaidDiagram } from './visualization/mermaid_generator.js';
 export { generateASCIITree, generateDependencyBox, generateHealthSummary } from './visualization/ascii_diagrams.js';
 export type { DiagramType, DiagramRequest, DiagramResult } from './visualization/mermaid_generator.js';
 export type { ASCIIResult, TreeNode } from './visualization/ascii_diagrams.js';
+
+// Graph Analysis - Cascading Impact (RESEARCH-004)
+export {
+  analyzeCascadingImpact,
+  estimateBenefitOfOptimizing,
+  estimateBlastRadius,
+  compareCascadeImpact,
+  getPropagationFactor,
+  isHighImpactEntity,
+  RISK_PROPAGATION_FACTORS,
+  BENEFIT_PROPAGATION_FACTORS,
+  DEFAULT_CASCADE_CONFIG,
+} from './graphs/cascading_impact.js';
+export type {
+  CascadeConfig,
+  CascadeResult,
+  AffectedEntity,
+  BenefitEstimate,
+  BlastRadiusEstimate,
+} from './graphs/cascading_impact.js';
 
 
 // Engine toolkit
@@ -678,9 +782,24 @@ export type {
   QueryPipelineStageDefinition,
   QueryPipelineDefinition,
   QueryStageObserver,
+  Perspective,
+  TokenBudget,
+  TokenBudgetResult,
+  DeterministicContext,
+  QueryDiagnostics,
 } from './types.js';
 
-export { DEFAULT_CONFIDENCE_MODEL, BOOTSTRAP_PHASES } from './types.js';
+export { DEFAULT_CONFIDENCE_MODEL, BOOTSTRAP_PHASES, PERSPECTIVES, isPerspective, createDeterministicContext, stableSort } from './types.js';
+
+// Perspective configuration exports
+export {
+  getPerspectiveConfig,
+  inferPerspective,
+  getRelevantTPatterns,
+  PERSPECTIVE_CONFIGS,
+  TASK_TYPE_TO_PERSPECTIVE,
+  type PerspectiveConfig,
+} from './api/perspective.js';
 
 // ============================================================================
 // VERSION CONSTANTS

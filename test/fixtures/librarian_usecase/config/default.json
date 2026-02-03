@@ -1,0 +1,19 @@
+{
+  "server": {
+    "port": 3000,
+    "host": "0.0.0.0"
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "users",
+    "pool": {
+      "min": 2,
+      "max": 10
+    }
+  },
+  "auth": {
+    "tokenExpiry": "24h",
+    "refreshExpiry": "7d"
+  }
+}

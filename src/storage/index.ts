@@ -41,6 +41,28 @@ export type {
   TransactionContext,
   IngestionQueryOptions,
   StorageStats,
+  EmbeddableEntityType,
+  // Argument Edge Types (Toulmin-IBIS Research)
+  ArgumentEdgeType,
+  ArgumentEntityType,
+  ArgumentEdge,
+  ArgumentEdgeMetadata,
+  ArgumentEdgeQueryOptions,
+} from './types.js';
+
+// Argument Edge Helper Functions and Constants
+export {
+  ARGUMENT_EDGE_TYPES,
+  ARGUMENT_ENTITY_TYPES,
+  isArgumentEdgeType,
+  isArgumentEntityType,
+  isArgumentEdge,
+  getArgumentEdges,
+  groupArgumentEdgesByType,
+  createArgumentEdge,
+  isConflictEdge,
+  isSupportEdge,
+  isDecisionChainEdge,
 } from './types.js';
 
 export {
@@ -67,3 +89,34 @@ export {
   StalenessTracker,
   createStalenessTracker,
 } from './staleness.js';
+
+// Content-Hash Based Caching
+export type {
+  ContentCacheEntry,
+  CacheStats,
+  ContentCacheOptions,
+  ContentCache,
+} from './content_cache.js';
+
+export {
+  computeContentHash,
+  SqliteContentCache,
+  InMemoryContentCache,
+  createContentCache,
+  createInMemoryContentCache,
+} from './content_cache.js';
+
+// Vector Index with HNSW Support
+export type {
+  VectorIndexItem,
+  VectorIndexConfig,
+  VectorIndexEntityType,
+  HNSWConfig,
+} from './vector_index.js';
+
+export {
+  VectorIndex,
+  HNSWIndex,
+  DEFAULT_HNSW_CONFIG,
+  HNSW_AUTO_THRESHOLD,
+} from './vector_index.js';

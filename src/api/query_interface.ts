@@ -1,8 +1,9 @@
 import type { LibrarianQuery, LibrarianResponse, ContextPack } from '../types.js';
+import type { EmbeddableEntityType } from '../storage/types.js';
 
 export interface SimilarMatch {
   entityId: string;
-  entityType: 'function' | 'module';
+  entityType: EmbeddableEntityType;
   similarity: number;
 }
 

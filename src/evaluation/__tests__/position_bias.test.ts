@@ -424,7 +424,11 @@ describe('PositionBiasManager - roundRobinImportant', () => {
 
   it('should spread important chunks at regular intervals', () => {
     const chunks = createManyChunks(10);
-    // Make some chunks clearly important
+    // Reset all importance values to be below threshold (deterministic)
+    for (let i = 0; i < chunks.length; i++) {
+      chunks[i].importance = 0.3 + i * 0.02; // 0.3 to 0.48 range
+    }
+    // Make some chunks clearly important (above IMPORTANCE_THRESHOLD of 0.7)
     chunks[0].importance = 0.95;
     chunks[3].importance = 0.9;
     chunks[7].importance = 0.85;

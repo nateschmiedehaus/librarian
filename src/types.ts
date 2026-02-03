@@ -179,6 +179,47 @@ export interface DirectoryKnowledge {
   };
 }
 
+/**
+ * Document-level knowledge - understanding of documentation files.
+ * Used for meta-queries like "How should an agent use Librarian?"
+ * Documents have high relevance for conceptual/how-to queries.
+ */
+export interface DocumentKnowledge {
+  id: string;                      // doc:relativePath
+  path: string;                    // Absolute file path
+  relativePath: string;            // Path relative to workspace
+  name: string;                    // File name (e.g., "AGENTS.md")
+
+  // Semantic understanding
+  title: string;                   // Primary heading or file name
+  summary: string;                 // LLM-generated summary
+  purpose: string;                 // What this document is for
+  audience: 'agent' | 'developer' | 'user' | 'general';
+
+  // Content structure
+  headings: string[];              // H1/H2 headings
+  keyTopics: string[];             // Main topics covered
+  wordCount: number;
+
+  // Relevance signals
+  isMetaDoc: boolean;              // AGENTS.md, README.md, etc.
+  relevanceBoost: number;          // 0-1, higher for agent-facing docs
+
+  // Tracking
+  embedding?: Float32Array;        // Semantic vector
+  confidence: number;
+  lastIndexed: string;
+  checksum: string;
+
+  // LLM Evidence
+  llmEvidence?: {
+    provider: string;
+    modelId: string;
+    promptDigest: string;
+    timestamp: string;
+  };
+}
+
 export type GraphEntityType = 'function' | 'module' | 'file' | 'directory';
 export type GraphEdgeType = 'calls' | 'imports' | 'extends' | 'implements';
 
@@ -213,6 +254,13 @@ export interface ContextPack {
   failureCount: number;
   version: LibrarianVersion;
   invalidationTriggers: string[]; // File paths that invalidate this pack
+
+  /**
+   * Signals this is the primary/best result for the query.
+   * Agents should focus on this pack first when processing results.
+   * Only one pack per response should have this flag set to true.
+   */
+  isPrimaryResult?: boolean;
 }
 
 export type ContextPackType =
@@ -221,7 +269,13 @@ export type ContextPackType =
   | 'pattern_context'
   | 'decision_context'
   | 'change_impact'
-  | 'similar_tasks';
+  | 'similar_tasks'
+  | 'doc_context'
+  | 'project_understanding'
+  | 'symbol_definition'
+  | 'enumeration_result'
+  | 'git_history'
+  | 'call_flow';
 
 export interface CodeSnippet {
   filePath: string;
@@ -319,7 +373,11 @@ export interface BootstrapConfig {
   fileTimeoutRetries?: number;
   /** Timeout policy after retries are exhausted ('retry' retries then fails). */
   fileTimeoutPolicy?: 'skip' | 'retry' | 'fail';
-  progressCallback?: (phase: BootstrapPhase, progress: number) => void;
+  progressCallback?: (phase: BootstrapPhase, progress: number, details?: {
+    total?: number;
+    current?: number;
+    currentFile?: string;
+  }) => void;
 
   // LLM Configuration (REQUIRED - there is NO non-agentic mode)
   llmProvider?: 'claude' | 'codex';
@@ -349,6 +407,18 @@ export interface BootstrapConfig {
 
   // Composition suggestion settings (codebase-aware recommendations after bootstrap)
   compositionSuggestions?: BootstrapCompositionSuggestionConfig;
+
+  // Constructable auto-selection settings
+  constructableAutoSelection?: {
+    /** Enable automatic constructable selection based on project analysis (default: true) */
+    enabled?: boolean;
+    /** Minimum confidence threshold for auto-enabling constructables (default: 0.6) */
+    minConfidence?: number;
+    /** Force enable specific constructables regardless of detection */
+    forceEnable?: string[];
+    /** Force disable specific constructables regardless of detection */
+    forceDisable?: string[];
+  };
 }
 
 export interface BootstrapPhase {
@@ -455,6 +525,15 @@ export interface BootstrapReport {
   nextSteps?: string[];
   /** Suggested technique compositions to run next */
   compositionSuggestions?: CompositionSuggestion[];
+  /** Auto-selected constructables based on project analysis */
+  autoSelectedConstructables?: {
+    enabled: string[];
+    disabled: string[];
+    confidence: number;
+    projectType: string | null;
+    frameworks: string[];
+    languages: string[];
+  };
 }
 
 export interface BootstrapPhaseMetrics {
@@ -485,6 +564,88 @@ export interface BootstrapPhaseResult {
 }
 
 // ============================================================================
+// PERSPECTIVE TYPES
+// ============================================================================
+
+/**
+ * Query perspectives for multi-view retrieval.
+ * Each perspective maps to relevant T-patterns and adjusts scoring weights.
+ *
+ * Research basis: docs/research/MULTI-PERSPECTIVE-VIEWS-RESEARCH.md
+ */
+export type Perspective =
+  | 'debugging'      // T-19 to T-24: Bug investigation patterns
+  | 'security'       // T-27: Security vulnerability patterns
+  | 'performance'    // T-28: Performance anti-patterns
+  | 'architecture'   // T-07, T-08, T-09, T-29: Design patterns, module architecture, circular deps
+  | 'modification'   // T-13 to T-18: Feature location, breaking changes, usages
+  | 'testing'        // T-06, T-17: Test mapping, coverage gaps
+  | 'understanding'; // T-01 to T-12: Code navigation and understanding
+
+/**
+ * All valid perspective values for validation.
+ */
+export const PERSPECTIVES: readonly Perspective[] = [
+  'debugging',
+  'security',
+  'performance',
+  'architecture',
+  'modification',
+  'testing',
+  'understanding',
+] as const;
+
+/**
+ * Type guard for Perspective values.
+ */
+export function isPerspective(value: unknown): value is Perspective {
+  return typeof value === 'string' && PERSPECTIVES.includes(value as Perspective);
+}
+
+// ============================================================================
+// TOKEN BUDGET TYPES
+// ============================================================================
+
+/**
+ * Token budget configuration for query responses.
+ * Agents have finite context windows - this allows them to request
+ * appropriately-sized responses to avoid wasting context space.
+ *
+ * Motivation: L1 queries can return 10,000+ tokens even when agents
+ * only need a 500-token answer. Token budgeting enables intelligent
+ * truncation by relevance rather than arbitrary cutoffs.
+ */
+export interface TokenBudget {
+  /** Maximum tokens allowed in the response */
+  maxTokens: number;
+  /** Reserve tokens for agent's response (subtracted from maxTokens) */
+  reserveTokens?: number;
+  /** Priority for what to preserve when truncating */
+  priority?: 'relevance' | 'recency' | 'diversity';
+}
+
+/**
+ * Result of token budget enforcement.
+ * Returned in LibrarianResponse to inform agents about truncation.
+ */
+export interface TokenBudgetResult {
+  /** Whether the response was truncated to fit the budget */
+  truncated: boolean;
+  /** Estimated tokens used in the response */
+  tokensUsed: number;
+  /** Total tokens available (maxTokens - reserveTokens) */
+  totalAvailable: number;
+  /** Strategy used for truncation */
+  truncationStrategy: 'relevance' | 'count' | 'none';
+  /** Number of packs before truncation */
+  originalPackCount?: number;
+  /** Number of packs after truncation */
+  finalPackCount?: number;
+  /** Fields that were trimmed */
+  trimmedFields?: string[];
+}
+
+// ============================================================================
 // QUERY TYPES
 // ============================================================================
 
@@ -495,6 +656,81 @@ export type LlmOptional<T> = T & { llmRequirement: 'optional' | 'disabled'; llmA
 export type LlmResult<T> =
   | { success: true; value: T }
   | { success: false; error: 'llm_unavailable'; partialResult?: Partial<T> };
+
+// ============================================================================
+// DETERMINISTIC MODE TYPES
+// ============================================================================
+
+/**
+ * Context for deterministic query execution.
+ * Provides fixed values for operations that would otherwise be non-deterministic.
+ */
+export interface DeterministicContext {
+  /** Fixed timestamp for all operations (ISO string) */
+  fixedTimestamp: string;
+  /** Fixed Date object for operations requiring Date */
+  fixedDate: Date;
+  /** Counter for generating sequential deterministic IDs */
+  idCounter: number;
+  /** Generate a deterministic ID with optional prefix */
+  generateId: (prefix?: string) => string;
+  /** Get the current fixed timestamp */
+  now: () => string;
+  /** Get the current fixed Date */
+  nowDate: () => Date;
+}
+
+/**
+ * Creates a deterministic context for reproducible query execution.
+ * Uses a fixed epoch timestamp and sequential ID generation.
+ */
+export function createDeterministicContext(seed?: string): DeterministicContext {
+  // Use a fixed timestamp: 2025-01-01T00:00:00.000Z
+  const fixedTimestamp = '2025-01-01T00:00:00.000Z';
+  const fixedDate = new Date(fixedTimestamp);
+  let idCounter = 0;
+
+  // Create deterministic ID based on seed and counter
+  const generateId = (prefix?: string): string => {
+    const counter = idCounter++;
+    const base = seed ? `${seed}-${counter}` : `det-${counter}`;
+    return prefix ? `${prefix}${base}` : base;
+  };
+
+  return {
+    fixedTimestamp,
+    fixedDate,
+    idCounter: 0,
+    generateId,
+    now: () => fixedTimestamp,
+    nowDate: () => fixedDate,
+  };
+}
+
+/**
+ * Applies stable sorting to an array by a secondary key (ID) when primary scores tie.
+ * This ensures deterministic ordering in query results.
+ *
+ * @param items - Array to sort
+ * @param getScore - Function to extract primary sort score (higher first)
+ * @param getId - Function to extract secondary sort key (alphabetical on ties)
+ * @returns Stably sorted array
+ */
+export function stableSort<T>(
+  items: T[],
+  getScore: (item: T) => number,
+  getId: (item: T) => string
+): T[] {
+  return [...items].sort((a, b) => {
+    const scoreA = getScore(a);
+    const scoreB = getScore(b);
+    if (scoreA !== scoreB) {
+      return scoreB - scoreA; // Higher score first
+    }
+    // On ties, sort by ID for stability
+    return getId(a).localeCompare(getId(b));
+  });
+}
 
 export type StageName =
   | 'adequacy_scan'
@@ -572,6 +808,123 @@ export interface LibrarianQuery {
   minConfidence?: number;
   ucRequirements?: UCRequirementSet;
   llmRequirement?: LlmRequirement;
+
+  /**
+   * Deterministic mode for testing and verification.
+   * When true, the query pipeline produces reproducible results by:
+   * - Skipping LLM synthesis (uses cached or returns without synthesis)
+   * - Using stable sorting (by ID when relevance scores tie)
+   * - Disabling any randomization (fixed UUIDs, fixed timestamps)
+   * - Returning consistent/omitted timestamps
+   *
+   * This is critical for agent testing where the same query must return
+   * identical results across multiple runs.
+   *
+   * Non-deterministic operations that ARE affected:
+   * - LLM synthesis: skipped (returns undefined or cached)
+   * - Result sorting: stable by ID on ties
+   * - UUID generation: uses deterministic IDs
+   * - Timestamps: uses fixed epoch or omitted
+   *
+   * Non-deterministic operations that are NOT affected:
+   * - Vector similarity search: inherently deterministic for same embeddings
+   * - Graph traversal: deterministic for same graph state
+   * - Cache hits: still used when available
+   */
+  deterministic?: boolean;
+
+  /**
+   * Query perspective for multi-view retrieval.
+   * When specified, boosts relevant T-patterns and adjusts scoring weights.
+   *
+   * Perspectives map to T-pattern categories:
+   * - 'debugging': T-19 to T-24 (bug investigation)
+   * - 'security': T-27 (security vulnerabilities)
+   * - 'performance': T-28 (performance anti-patterns)
+   * - 'architecture': T-07, T-08, T-09, T-29 (design patterns, structure)
+   * - 'modification': T-13 to T-18 (feature location, breaking changes)
+   * - 'testing': T-06, T-17 (test mapping, coverage)
+   * - 'understanding': T-01 to T-12 (navigation, comprehension)
+   */
+  perspective?: Perspective;
+
+  /**
+   * Token budget for response size control.
+   * When specified, the response will be truncated to fit within the budget,
+   * preserving the most relevant results by score.
+   *
+   * This is critical for agent integration where context windows are finite
+   * and verbose responses waste valuable context space.
+   */
+  tokenBudget?: TokenBudget;
+
+  /**
+   * Edge types to filter knowledge graph traversal.
+   * When specified, only edges of these types are considered during graph
+   * expansion and relation discovery.
+   *
+   * This enables targeted queries like:
+   * - "Show me what supports this decision" → filter to 'supports' edges
+   * - "Show me contradicting alternatives" → filter to 'contradicts' edges
+   * - "Show me the decision chain" → filter to 'supersedes', 'depends_on_decision'
+   *
+   * Can include both KnowledgeEdgeType (imports, calls, etc.) and
+   * ArgumentEdgeType (supports, warrants, contradicts, etc.) values.
+   *
+   * @see docs/research/ARGUMENTATION-STRUCTURES-FOR-CODE-REASONING.md
+   */
+  edgeTypes?: string[];
+
+  /**
+   * Exhaustive mode for complete dependency enumeration.
+   *
+   * When enabled, the query uses graph traversal instead of semantic search
+   * to find ALL entities matching the dependency criteria. This is critical
+   * for refactoring scenarios where missing even one dependent can cause breakage.
+   *
+   * Use cases:
+   * - "What depends on SqliteLibrarianStorage" -> Returns ALL 208 files, not 6
+   * - "Everything that imports src/storage/types.ts" -> Complete list
+   * - Impact analysis for breaking changes
+   *
+   * Options:
+   * - enabled: Turn on exhaustive mode (default: auto-detected from intent)
+   * - includeTransitive: Follow transitive dependencies (A->B->C means A depends on C)
+   * - maxDepth: Maximum depth for transitive traversal (default: 10)
+   * - direction: 'dependents' (who imports this) or 'dependencies' (what this imports)
+   *
+   * Performance note: Exhaustive queries can be slow on large codebases.
+   * Use semantic search for exploration, exhaustive for refactoring.
+   */
+  exhaustive?: {
+    /** Enable exhaustive enumeration mode */
+    enabled: boolean;
+    /** Include transitive dependencies (A imports B imports C -> A depends on C) */
+    includeTransitive?: boolean;
+    /** Maximum depth for transitive traversal (default: 10) */
+    maxDepth?: number;
+    /** Direction: 'dependents' (who imports this) or 'dependencies' (what this imports) */
+    direction?: 'dependents' | 'dependencies';
+    /** Specific target entity (file path or symbol name) */
+    targetEntity?: string;
+  };
+
+  /**
+   * Enabled constructables for query routing.
+   * When provided, only constructions in this list will be activated during query.
+   * This is typically populated from the session's constructableConfig.enabled.
+   *
+   * Construction IDs map to stage runners:
+   * - 'refactoring-safety-checker' -> runRefactoringSafetyStage
+   * - 'bug-investigation-assistant' -> runBugInvestigationStage
+   * - 'security-audit-helper' -> runSecurityAuditStage
+   * - 'architecture-verifier' -> runArchitectureVerificationStage
+   * - 'code-quality-reporter' -> runCodeQualityStage
+   * - 'feature-location-advisor' -> runFeatureLocationStage
+   *
+   * When undefined, all constructions that match pattern are enabled (legacy behavior).
+   */
+  enabledConstructables?: string[];
 }
 
 export interface UCRequirementSet {
@@ -605,6 +958,31 @@ export interface UncertaintyMetrics {
   variance: number;
 }
 
+/**
+ * Structured follow-up query suggestion.
+ * Provides actionable queries agents can execute directly, rather than
+ * generic string hints that require interpretation.
+ */
+export interface FollowUpQuery {
+  /** The query intent to execute (can be passed directly to librarian) */
+  intent: string;
+  /** Why this follow-up is relevant based on current results */
+  reason: string;
+}
+
+/**
+ * Diagnostic information when a query returns zero results.
+ * Helps agents understand why no results were found and what to try next.
+ */
+export interface QueryDiagnostics {
+  /** Always true when this field is present - indicates empty results */
+  noResults: true;
+  /** Reasons explaining why no results were returned */
+  reasons: string[];
+  /** Actionable suggestions for getting better results */
+  suggestions: string[];
+}
+
 export interface LibrarianResponse {
   query: LibrarianQuery;
   packs: ContextPack[];
@@ -622,6 +1000,12 @@ export interface LibrarianResponse {
   llmRequirement?: LlmRequirement;
   llmAvailable?: boolean;
   drillDownHints: string[];
+  /**
+   * Structured follow-up queries agents can execute directly.
+   * Each entry includes an intent (the actual query) and reason (why it's relevant).
+   * Agents should prefer these over drillDownHints for automated exploration.
+   */
+  followUpQueries?: FollowUpQuery[];
   methodHints?: string[];
   methodFamilies?: string[];
   methodHintSource?: 'uc' | 'taskType' | 'intent' | 'llm';
@@ -645,6 +1029,107 @@ export interface LibrarianResponse {
    * Per CONTROL_LOOP.md: -0.1 for irrelevant, +0.05 × usefulness for relevant.
    */
   feedbackToken?: string;
+
+  /**
+   * Token budget enforcement result.
+   * Present when tokenBudget was specified in the query.
+   * Provides metadata about any truncation that was applied.
+   */
+  tokenBudgetResult?: TokenBudgetResult;
+
+  /**
+   * Edge information from graph traversal.
+   * Present when edgeTypes filter is specified in the query.
+   * Contains edges discovered during graph expansion, filtered by the specified types.
+   *
+   * This is especially useful for argument edge queries like:
+   * - "What supports this decision?" (supports, warrants edges)
+   * - "What contradicts this?" (contradicts, undermines, rebuts edges)
+   * - "Show decision chain" (supersedes, depends_on_decision edges)
+   */
+  edges?: EdgeQueryResult;
+
+  /**
+   * Complete dependency enumeration result.
+   * Present when exhaustive mode is enabled (explicitly or auto-detected).
+   *
+   * Unlike semantic search which returns top-k ranked matches, exhaustive mode
+   * uses graph traversal to find ALL dependents. Critical for refactoring.
+   *
+   * Example: "What depends on SqliteLibrarianStorage" returns 208 files, not 6.
+   */
+  exhaustiveResult?: ExhaustiveQuerySummary;
+
+  /**
+   * Diagnostic information explaining why no results were returned.
+   * Only present when packs.length === 0.
+   *
+   * Helps agents understand the root cause and take corrective action:
+   * - "Vector index empty - no semantic search available"
+   * - "No semantic matches for query"
+   * - "Found candidates but no matching context packs"
+   * - "All packs below confidence threshold"
+   */
+  queryDiagnostics?: QueryDiagnostics;
+}
+
+/**
+ * Summary of exhaustive query results for the response.
+ * Full details available via dedicated exhaustive query API.
+ */
+export interface ExhaustiveQuerySummary {
+  /** Target entity that was queried */
+  targetId: string;
+  /** Query direction */
+  direction: 'dependents' | 'dependencies';
+  /** Total count of entities found */
+  totalCount: number;
+  /** Count of direct dependents/dependencies */
+  directCount: number;
+  /** Count of transitive dependents/dependencies */
+  transitiveCount: number;
+  /** Maximum depth reached in traversal */
+  maxDepthReached: number;
+  /** Number of dependency cycles detected */
+  cycleCount: number;
+  /** Whether results were truncated due to limits */
+  truncated: boolean;
+  /** File paths of all dependents (complete list) */
+  files: string[];
+  /** Files grouped by directory */
+  byDirectory: Record<string, string[]>;
+  /** Query duration in milliseconds */
+  durationMs: number;
+}
+
+/**
+ * Edge information included in query results.
+ */
+export interface EdgeQueryResult {
+  /** Edges discovered during graph traversal */
+  edges: EdgeInfo[];
+  /** Edge types that were searched */
+  edgeTypesSearched: string[];
+  /** Total edges before filtering/limit */
+  totalCount: number;
+}
+
+/**
+ * Simplified edge information for query responses.
+ */
+export interface EdgeInfo {
+  /** Edge type (e.g., 'supports', 'calls', 'imports') */
+  type: string;
+  /** Source entity ID */
+  sourceId: string;
+  /** Target entity ID */
+  targetId: string;
+  /** Edge weight (0-1) */
+  weight: number;
+  /** Edge confidence (0-1) */
+  confidence: number;
+  /** Whether this is an argument edge (Toulmin-IBIS type) */
+  isArgumentEdge: boolean;
 }
 
 export interface OutputEnvelope {

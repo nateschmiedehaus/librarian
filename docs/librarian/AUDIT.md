@@ -23,6 +23,7 @@ Evidence: docs only (implementation evidence lives in STATUS.md)
 - Check canonical docs align (no contradictions).
 - Ensure each claim links to evidence.
 - Verify STATUS is evidence-only.
+- Verify `docs/librarian/hazard_register.md` is updated for any new features.
 
 ### Phase 2: Implementation Mapping
 - Map each subsystem to code locations.
@@ -68,6 +69,8 @@ Evidence: docs only (implementation evidence lives in STATUS.md)
 ## Audit Commands (Minimum)
 - `npm run test:tier0`
 - `npm test`
+- `npm run evidence:manifest`
+- `npm run evidence:reconcile`
 
 ## Output Artifacts
 - Summary report

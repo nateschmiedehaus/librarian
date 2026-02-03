@@ -3,6 +3,7 @@ import { requireProviders } from './provider_check.js';
 import { resolveLibrarianModelConfigWithDiscovery, type LibrarianLlmProvider } from './llm_env.js';
 import { resolveLlmServiceAdapter, type LlmServiceAdapter } from '../adapters/llm_service.js';
 import { safeJsonParse } from '../utils/safe_json.js';
+import { withTimeout } from '../utils/async.js';
 
 export type FundamentalAspect =
   | 'data'
@@ -210,7 +211,8 @@ export async function decomposeDomainWithLlm(
       temperature: 0,
       disableTools: true,
     }),
-    options.timeoutMs ?? 45_000
+    options.timeoutMs ?? 45_000,
+    { context: 'unverified_by_trace(domain_decomposition_timeout)' }
   );
 
   const parsed = safeJsonParse<{ aspects?: unknown; rationale?: unknown }>(response.content);
@@ -356,22 +358,4 @@ export function validateDomainComposition(
     missingPrimitives,
     unknownPrimitives,
   };
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
-  let timeoutId: NodeJS.Timeout | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error('unverified_by_trace(domain_decomposition_timeout)')),
-          timeoutMs
-        );
-      }),
-    ]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
 }

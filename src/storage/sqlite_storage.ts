@@ -19,6 +19,7 @@ import type {
   GraphEdgeQueryOptions,
   SimilaritySearchOptions,
   SimilarityResult,
+  SimilaritySearchResponse,
   MultiVectorRecord,
   MultiVectorQueryOptions,
   TransactionContext,
@@ -82,6 +83,7 @@ import type {
   KnowledgeSubgraph,
   FaultLocalization,
   FaultLocalizationQueryOptions,
+  EmbeddableEntityType,
 } from './types.js';
 import type { FlashAssessment, FlashFinding } from '../knowledge/extractors/flash_assessments.js';
 import { VectorIndex } from './vector_index.js';
@@ -118,6 +120,19 @@ import {
   type RedactionCounts,
 } from '../api/redaction.js';
 import { logWarning } from '../telemetry/logger.js';
+
+// ============================================================================
+// LOCK CONFIGURATION
+// ============================================================================
+
+/** Lock stale timeout - should exceed maximum synchronous operation time */
+const LOCK_STALE_TIMEOUT_MS = 15 * 60_000; // 15 minutes
+
+/** Lock update interval - how often to refresh the lock */
+const LOCK_UPDATE_INTERVAL_MS = 60_000; // 1 minute
+
+/** Maximum lock acquisition retries */
+const LOCK_MAX_RETRIES = 12;
 
 // ============================================================================
 // SQL INJECTION PREVENTION
@@ -246,6 +261,23 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
     if (this.initialized) return;
     await fs.mkdir(path.dirname(this.lockPath), { recursive: true });
     await fs.writeFile(this.dbPath, '', { flag: 'a' });
+
+    // Check for and clear stale locks before attempting acquisition
+    try {
+      const isLocked = await lockfile.check(this.dbPath, { lockfilePath: this.lockPath, stale: LOCK_STALE_TIMEOUT_MS });
+      if (isLocked) {
+        // Lock exists but may be stale from a crashed process
+        // The proper-lockfile library will handle this via the stale option
+        logWarning('Existing lock detected, will attempt to acquire with stale recovery', { path: this.lockPath });
+      }
+    } catch (checkError) {
+      // Lock check failed, proceed with acquisition which will handle this case
+      logWarning('Lock check failed, proceeding with acquisition', {
+        path: this.lockPath,
+        error: checkError instanceof Error ? checkError.message : String(checkError)
+      });
+    }
+
     try {
       // IMPORTANT: proper-lockfile will throw an uncaught exception by default if it considers a lock compromised
       // (e.g., event loop stalls preventing timely lock refresh). Always provide an onCompromised handler.
@@ -253,8 +285,8 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
       // during long synchronous work (SQLite WAL checkpoints, embedding model loads, etc.).
       this.releaseLock = await lockfile.lock(this.dbPath, {
         lockfilePath: this.lockPath,
-        stale: 5 * 60_000,
-        update: 60_000,
+        stale: LOCK_STALE_TIMEOUT_MS,
+        update: LOCK_UPDATE_INTERVAL_MS,
         onCompromised: (err) => {
           const error = err instanceof Error ? err : new Error(String(err));
           this.lockCompromisedError = error;
@@ -275,10 +307,10 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
           });
         },
         retries: {
-          retries: 10,
+          retries: LOCK_MAX_RETRIES,
           factor: 1.5,
-          minTimeout: 100,
-          maxTimeout: 5_000,
+          minTimeout: 200,
+          maxTimeout: 10_000,
         },
       });
     } catch (error) {
@@ -1163,6 +1195,14 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
     const rows = db
       .prepare('SELECT * FROM librarian_functions WHERE file_path = ?')
       .all(filePath) as FunctionRow[];
+    return rows.map(rowToFunction);
+  }
+
+  async getFunctionsByName(name: string): Promise<FunctionKnowledge[]> {
+    const db = this.ensureDb();
+    const rows = db
+      .prepare('SELECT * FROM librarian_functions WHERE name = ?')
+      .all(name) as FunctionRow[];
     return rows.map(rowToFunction);
   }
 
@@ -2568,6 +2608,104 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
   }
 
   // --------------------------------------------------------------------------
+  // Dependency Invalidation
+  // --------------------------------------------------------------------------
+
+  /**
+   * Invalidate cached query results for a file.
+   * Removes query cache entries that reference the given file path.
+   *
+   * @param filePath - The file whose cache should be invalidated
+   * @returns Number of cache entries invalidated
+   */
+  async invalidateCache(filePath: string): Promise<number> {
+    const db = this.ensureDb();
+    const fileResult = this.sanitizeString(filePath);
+
+    // Invalidate query cache entries that contain this file path in their params
+    // Query params are stored as JSON, so we search for the file path within
+    const result = db.prepare(`
+      DELETE FROM librarian_query_cache
+      WHERE query_params LIKE ?
+    `).run(`%${fileResult.value}%`);
+
+    // Also invalidate context packs that have this file in their related files
+    const packResult = db.prepare(`
+      UPDATE librarian_context_packs
+      SET invalidated = 1
+      WHERE related_files LIKE ?
+    `).run(`%${fileResult.value}%`);
+
+    await this.recordRedactions(fileResult.counts);
+    return result.changes + packResult.changes;
+  }
+
+  /**
+   * Invalidate embeddings for entities in a file.
+   * Marks embeddings as stale by deleting them (they will be regenerated on next access).
+   *
+   * @param filePath - The file whose embeddings should be invalidated
+   * @returns Number of embeddings invalidated
+   */
+  async invalidateEmbeddings(filePath: string): Promise<number> {
+    const db = this.ensureDb();
+    const fileResult = this.sanitizeString(filePath);
+
+    // Get function IDs for this file
+    const functionIds = db.prepare(`
+      SELECT id FROM librarian_functions WHERE file_path = ?
+    `).all(fileResult.value) as { id: string }[];
+
+    // Get module ID for this file (module path == file path)
+    const moduleIds = db.prepare(`
+      SELECT id FROM librarian_modules WHERE path = ?
+    `).all(fileResult.value) as { id: string }[];
+
+    // Delete embeddings for these entities
+    let deletedCount = 0;
+    const deleteEmbed = db.prepare('DELETE FROM librarian_embeddings WHERE entity_id = ?');
+    const deleteMultiVector = db.prepare('DELETE FROM librarian_multi_vectors WHERE entity_id = ?');
+
+    db.transaction(() => {
+      for (const { id } of functionIds) {
+        const result1 = deleteEmbed.run(id);
+        const result2 = deleteMultiVector.run(id);
+        deletedCount += result1.changes + result2.changes;
+      }
+      for (const { id } of moduleIds) {
+        const result1 = deleteEmbed.run(id);
+        const result2 = deleteMultiVector.run(id);
+        deletedCount += result1.changes + result2.changes;
+      }
+    })();
+
+    this.vectorIndexDirty = true;
+    await this.recordRedactions(fileResult.counts);
+    return deletedCount;
+  }
+
+  /**
+   * Get files that import the given file (reverse dependencies).
+   *
+   * @param filePath - The file to find importers for
+   * @returns Array of file paths that import the given file
+   */
+  async getReverseDependencies(filePath: string): Promise<string[]> {
+    const db = this.ensureDb();
+    const fileResult = this.sanitizeString(filePath);
+
+    // Find all files that have an "imports" edge pointing to this file
+    const rows = db.prepare(`
+      SELECT DISTINCT source_file
+      FROM librarian_graph_edges
+      WHERE edge_type = 'imports' AND to_id = ?
+    `).all(fileResult.value) as { source_file: string }[];
+
+    await this.recordRedactions(fileResult.counts);
+    return rows.map((row) => row.source_file);
+  }
+
+  // --------------------------------------------------------------------------
   // Embeddings
   // --------------------------------------------------------------------------
 
@@ -2629,10 +2767,83 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
     this.vectorIndexDirty = true;
   }
 
+  /**
+   * Clear embeddings that don't match the expected dimension.
+   * Used for auto-recovery when embedding model changes.
+   *
+   * @param expectedDimension - The expected embedding dimension (e.g., 384 for sentence-transformers)
+   * @returns Number of embeddings deleted
+   */
+  async clearMismatchedEmbeddings(expectedDimension: number): Promise<number> {
+    const db = this.ensureDb();
+    const expectedBytes = expectedDimension * Float32Array.BYTES_PER_ELEMENT;
+
+    // Delete embeddings where byte length doesn't match expected dimension
+    const result = db.prepare(`
+      DELETE FROM librarian_embeddings WHERE length(embedding) != ?
+    `).run(expectedBytes);
+
+    // Also clear multi-vectors with mismatched dimensions
+    // Multi-vectors store dimension in the payload, so we need to check each one
+    const multiVectorRows = db.prepare(`
+      SELECT entity_id, entity_type, payload FROM librarian_multi_vectors
+    `).all() as Array<{ entity_id: string; entity_type: string; payload: string }>;
+
+    let multiVectorDeleted = 0;
+    const deleteMultiVector = db.prepare(
+      'DELETE FROM librarian_multi_vectors WHERE entity_id = ? AND entity_type = ?'
+    );
+
+    db.transaction(() => {
+      for (const row of multiVectorRows) {
+        try {
+          const payload = JSON.parse(row.payload) as { summary?: { embedding?: number[] } };
+          // Check if the summary embedding dimension matches
+          if (payload.summary?.embedding && payload.summary.embedding.length !== expectedDimension) {
+            deleteMultiVector.run(row.entity_id, row.entity_type);
+            multiVectorDeleted++;
+          }
+        } catch {
+          // If we can't parse the payload, skip this row
+        }
+      }
+    })();
+
+    const totalDeleted = result.changes + multiVectorDeleted;
+
+    if (totalDeleted > 0) {
+      this.vectorIndexDirty = true;
+      logWarning('[librarian] Cleared mismatched embeddings for auto-recovery', {
+        expectedDimension,
+        embeddingsDeleted: result.changes,
+        multiVectorsDeleted: multiVectorDeleted,
+      });
+    }
+
+    return totalDeleted;
+  }
+
+  /**
+   * Get embedding statistics for diagnostics.
+   * Returns counts of embeddings grouped by dimension.
+   */
+  async getEmbeddingStats(): Promise<{ dimension: number; count: number }[]> {
+    const db = this.ensureDb();
+
+    const rows = db.prepare(`
+      SELECT length(embedding) / 4 as dimension, COUNT(*) as count
+      FROM librarian_embeddings
+      GROUP BY length(embedding)
+      ORDER BY count DESC
+    `).all() as Array<{ dimension: number; count: number }>;
+
+    return rows;
+  }
+
   async findSimilarByEmbedding(
     queryEmbedding: Float32Array,
     options: SimilaritySearchOptions
-  ): Promise<SimilarityResult[]> {
+  ): Promise<SimilaritySearchResponse> {
     const index = this.ensureVectorIndex();
     const db = this.ensureDb();
     const expectedBytes = queryEmbedding.length * Float32Array.BYTES_PER_ELEMENT;
@@ -2651,22 +2862,68 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
     ) as { total: number; matching: number | null } | undefined;
     const totalEmbeddings = countRow?.total ?? 0;
     const matchingEmbeddings = Number(countRow?.matching ?? 0);
+
+    // Track degradation state
+    let degraded = false;
+    let degradedReason: SimilaritySearchResponse['degradedReason'];
+    let clearedMismatchedCount: number | undefined;
+
+    // Handle complete dimension mismatch
     if (totalEmbeddings > 0 && matchingEmbeddings === 0) {
-      throw new Error(
-        `unverified_by_trace(embedding_dimension_mismatch): stored embeddings do not match ` +
-        `query dimension ${queryEmbedding.length}. Re-index embeddings to ${queryEmbedding.length} dimensions.`
-      );
+      if (options.autoRecoverDimensionMismatch) {
+        // Auto-recovery: clear mismatched embeddings and return degraded results
+        clearedMismatchedCount = await this.clearMismatchedEmbeddings(queryEmbedding.length);
+        logWarning('[librarian] Auto-recovered from dimension mismatch by clearing embeddings', {
+          expectedDimension: queryEmbedding.length,
+          clearedCount: clearedMismatchedCount,
+        });
+        degraded = true;
+        degradedReason = 'auto_recovered_dimension_mismatch';
+        // Return empty results since all embeddings were cleared
+        return { results: [], degraded, degradedReason, clearedMismatchedCount };
+      } else {
+        throw new Error(
+          `unverified_by_trace(embedding_dimension_mismatch): stored embeddings do not match ` +
+          `query dimension ${queryEmbedding.length}. Re-index embeddings to ${queryEmbedding.length} dimensions.`
+        );
+      }
     }
+
     if (totalEmbeddings > matchingEmbeddings) {
       logWarning('[librarian] Skipping embeddings with dimension mismatch', {
         expectedDimension: queryEmbedding.length,
         totalEmbeddings,
         matchingEmbeddings,
       });
+      degraded = true;
+      degradedReason = 'dimension_mismatch';
     }
 
+    // Check for empty/null vector index (degraded state)
+    if (!index) {
+      logWarning('[librarian] findSimilarByEmbedding: vector index is null', {
+        queryDimension: queryEmbedding.length,
+      });
+      degraded = true;
+      degradedReason = 'vector_index_null';
+    } else if (index.size() === 0) {
+      logWarning('[librarian] findSimilarByEmbedding: vector index is empty', {
+        queryDimension: queryEmbedding.length,
+      });
+      degraded = true;
+      degradedReason = 'vector_index_empty';
+    }
+
+    // Use optimized HNSW index if available and has matching dimensions
     if (index && index.size() > 0 && index.hasDimension(queryEmbedding.length)) {
-      return index.search(queryEmbedding, options);
+      const results = index.search(queryEmbedding, options);
+      return { results, degraded, degradedReason };
+    }
+
+    // Fallback to brute-force SQL search (always degraded)
+    if (!degraded) {
+      degraded = true;
+      degradedReason = 'fallback_to_brute_force';
     }
 
     if (sql.includes('WHERE')) {
@@ -2697,7 +2954,7 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
       if (similarity >= options.minSimilarity) {
         results.push({
           entityId: row.entity_id,
-          entityType: row.entity_type as 'function' | 'module',
+          entityType: row.entity_type as 'function' | 'module' | 'document',
           similarity,
         });
       }
@@ -2705,7 +2962,7 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
 
     // Sort by similarity descending and limit
     results.sort((a, b) => b.similarity - a.similarity);
-    return results.slice(0, options.limit);
+    return { results: results.slice(0, options.limit), degraded, degradedReason };
   }
 
   async getMultiVector(entityId: string, entityType?: 'function' | 'module'): Promise<MultiVectorRecord | null> {
@@ -2888,7 +3145,7 @@ export class SqliteLibrarianStorage implements LibrarianStorage {
     return this.vectorIndex;
   }
 
-  private loadVectorIndexItems(): Array<{ entityId: string; entityType: 'function' | 'module'; embedding: Float32Array }> { const db = this.ensureDb(); const rows = db.prepare('SELECT entity_id, entity_type, embedding FROM librarian_embeddings').all() as { entity_id: string; entity_type: string; embedding: Buffer; }[]; return rows.map((row) => { const view = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.length / 4); return { entityId: row.entity_id, entityType: row.entity_type as 'function' | 'module', embedding: new Float32Array(view) }; }); }
+  private loadVectorIndexItems(): Array<{ entityId: string; entityType: EmbeddableEntityType; embedding: Float32Array }> { const db = this.ensureDb(); const rows = db.prepare('SELECT entity_id, entity_type, embedding FROM librarian_embeddings').all() as { entity_id: string; entity_type: string; embedding: Buffer; }[]; return rows.map((row) => { const view = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.length / 4); return { entityId: row.entity_id, entityType: row.entity_type as EmbeddableEntityType, embedding: new Float32Array(view) }; }); }
 
   // --------------------------------------------------------------------------
   // Graph Metrics

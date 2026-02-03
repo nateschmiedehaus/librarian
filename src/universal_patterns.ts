@@ -358,6 +358,10 @@ export const UNIVERSAL_EXCLUDES = [
 
   // Temp/Cache (only exclude clearly generated caches, not workspace roots)
   '**/.cache/**',
+
+  // Eval corpus and external test fixtures (should not pollute query results)
+  '**/eval-corpus/**',
+  '**/external-repos/**',
 ];
 
 const globCache = new Map<string, RegExp>();

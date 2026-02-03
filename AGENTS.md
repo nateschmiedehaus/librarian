@@ -5,6 +5,193 @@
 
 ---
 
+## Using Librarian (READ THIS FIRST)
+
+**Librarian is AUTOMATIC.** You do not need to configure anything. Just use it.
+
+### Programmatic Usage (Recommended)
+
+```typescript
+import { initializeLibrarian } from 'librarian';
+
+// All you need - Librarian handles everything else
+const lib = await initializeLibrarian(workspace);
+const context = await lib.query(intent);
+```
+
+That's it. Librarian automatically:
+- **Auto-bootstraps** if the workspace hasn't been indexed yet
+- **Auto-configures** with optimal settings for your codebase
+- **Auto-selects quality tier** (always uses 'full' for best results)
+- **Auto-enables constructables** (patterns, relationships, architectural context)
+- **Provides documentation AND code context** in every response
+
+### CLI Quick Reference
+
+```bash
+librarian status          # Check if Librarian is ready for this workspace
+librarian query "intent"  # Get context for any coding intent/question
+librarian health          # Check system health and index status
+```
+
+### What You Get Back
+
+When you call `lib.query(intent)`, you receive:
+- **Relevant code snippets** with file paths and line numbers
+- **Function signatures** and their relationships
+- **Architectural context** explaining how components connect
+- **Documentation excerpts** when available
+- **Pattern matches** for common coding tasks
+
+### Do NOT Worry About
+
+- Configuration files - Librarian configures itself
+- Index management - Librarian auto-indexes and watches for changes
+- Quality tiers - Librarian always uses maximum quality
+- Provider setup - Librarian handles embedding providers automatically
+- Caching - Librarian caches intelligently without your intervention
+
+**Just query. Librarian handles the rest.**
+
+---
+
+## Troubleshooting
+
+### 1. Zero-File Bootstrap
+
+**Symptom**: Bootstrap completes but reports "0 files indexed" or empty database.
+
+**Cause**: Working directory mismatch, `.gitignore` excluding all code, or no supported file types found.
+
+**Fix**:
+```bash
+# Verify you're in the right directory
+pwd
+ls -la src/  # Check source files exist
+
+# Check what files would be indexed
+find . -name "*.ts" -o -name "*.js" | head -20
+
+# Force bootstrap with explicit path
+librarian bootstrap --path $(pwd) --force
+
+# If still 0, check .librarianignore or config excludes
+cat .librarianignore 2>/dev/null
+```
+
+### 2. Bootstrap Fails or Hangs
+
+**Symptom**: Bootstrap never completes, times out, or crashes with errors.
+
+**Cause**: Embedding provider unavailable, database lock, or out of memory on large repos.
+
+**Fix**:
+```bash
+# Kill any stuck processes
+pkill -f librarian
+
+# Clear corrupted state
+rm -rf .librarian/  # Remove index directory
+rm -f librarian.db* # Remove database files
+
+# Bootstrap in offline mode (no embeddings)
+librarian bootstrap --offline
+
+# For large repos, use incremental mode
+librarian bootstrap --incremental --batch-size 50
+```
+
+### 3. Query Returns Empty
+
+**Symptom**: `lib.query()` returns no results or empty context.
+
+**Cause**: Index not built, query too specific, or embedding mismatch.
+
+**Fix**:
+```bash
+# Check index status
+librarian status
+librarian health
+
+# Verify files are indexed
+librarian stats  # Shows file count
+
+# Try broader query
+librarian query "main entry point"  # Instead of specific function names
+
+# Force re-index if stale
+librarian reindex --force
+```
+
+### 4. Database Locked
+
+**Symptom**: `SQLITE_BUSY` or "database is locked" errors.
+
+**Cause**: Multiple processes accessing the database, or crashed process left lock.
+
+**Fix**:
+```bash
+# Find and kill processes holding the lock
+lsof librarian.db 2>/dev/null | awk 'NR>1 {print $2}' | xargs -r kill
+
+# If no processes found, remove stale lock files
+rm -f librarian.db-wal librarian.db-shm
+
+# Retry operation
+librarian status
+```
+
+### 5. Provider Unavailable
+
+**Symptom**: "Embedding provider not available" or API errors during bootstrap/query.
+
+**Cause**: No API key configured, network issues, or provider rate-limited.
+
+**Fix**:
+```bash
+# Check provider status
+librarian health --providers
+
+# Use offline/degraded mode (keyword search only)
+librarian bootstrap --offline
+librarian query "search term" --no-embeddings
+
+# Switch to local provider if available
+export LIBRARIAN_PROVIDER=local
+librarian bootstrap
+```
+
+### 6. Fallback Without Librarian
+
+**Symptom**: Librarian completely broken and you need context NOW.
+
+**Cause**: Any unrecoverable Librarian failure.
+
+**Fix** (manual alternatives):
+```bash
+# Find files by name
+find . -type f -name "*.ts" | xargs grep -l "functionName"
+
+# Search code content
+grep -rn "pattern" src/ --include="*.ts"
+
+# Find function definitions
+grep -rn "function handleAuth\|const handleAuth\|handleAuth =" src/
+
+# Find imports/exports
+grep -rn "export.*ClassName\|import.*ClassName" src/
+
+# Get file structure
+find src -name "*.ts" | head -50
+
+# Read specific file
+cat src/api/index.ts | head -100
+```
+
+When Librarian is back, re-bootstrap: `librarian bootstrap --force`
+
+---
+
 ## Queued: WU-801-REAL (after Phase 10 core)
 
 The `eval-corpus/repos/*` directories have no git remotes. WU-801-REAL will clone real external repos.
@@ -377,3 +564,46 @@ If your session/context is ending:
 - **Fail closed** - never fake capabilities or skip silently
 - **You have full autonomy** within the non-negotiables
 - **Continue until Full Build Charter satisfied** — not before
+
+---
+
+<!-- LIBRARIAN_DOCS_START -->
+## Librarian: Codebase Knowledge System
+> Auto-generated by librarian bootstrap. Do not edit manually.
+### What is Librarian?
+Librarian is the **codebase knowledge backbone** for AI coding agents. It provides:
+- **Semantic search**: Find code by meaning, not just keywords
+- **Context packs**: Pre-computed context for common tasks
+- **Function knowledge**: Purpose, signatures, and relationships
+- **Graph analysis**: Call graphs, import graphs, and metrics
+### How to Use Librarian
+```typescript
+// 1. Get the librarian instance
+import { getLibrarian } from 'librarian';
+const librarian = await getLibrarian(workspaceRoot);
+// 2. Query for context
+const context = await librarian.query('How does authentication work?');
+// 3. Use in prompts
+const prompt = `Given this context:\n${context}\nImplement...`;
+```
+### Current Capabilities
+**Available**: semantic search, llm enrichment, function data, structural data, relationship graph, context packs
+### Index Statistics
+- **Last indexed**: 2026-02-02T19:14:22.953Z
+- **Files processed**: 1448
+- **Functions indexed**: 9266
+- **Context packs**: 3327
+### Key Documentation
+- **Entry point**: `docs/librarian/README.md`
+- **API reference**: `src/librarian/api/README.md`
+- **Query guide**: `docs/librarian/query-guide.md`
+### When to Re-index
+Librarian auto-watches for changes. Manual reindex needed when:
+- Major refactoring (>50 files changed)
+- After git operations that bypass file watchers
+- When embeddings seem stale
+```bash
+# Trigger manual reindex
+npx librarian reindex --force
+```
+<!-- LIBRARIAN_DOCS_END -->

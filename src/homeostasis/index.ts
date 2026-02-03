@@ -2,6 +2,7 @@
  * @fileoverview Homeostasis Module
  *
  * Autonomous system maintenance through the MAPE-K control loop.
+ * Includes self-healing configuration subsystem and dependency invalidation.
  *
  * @packageDocumentation
  */
@@ -27,3 +28,39 @@ export {
   type ActionRecord,
   type DaemonStatus,
 } from './daemon.js';
+
+// Dependency Tracker (for file change invalidation)
+export {
+  DependencyTracker,
+  createDependencyTracker,
+  createHydratedDependencyTracker,
+  onFileChanged,
+  type DependencyGraph,
+  type InvalidationResult,
+  type InvalidationOptions,
+} from './dependency_tracker.js';
+
+// Re-export config self-healing for convenience
+export {
+  diagnoseConfiguration,
+  autoHealConfiguration,
+  rollbackConfiguration,
+  getEffectivenessHistory,
+  createConfigHealingTrigger,
+  type ConfigHealthReport,
+  type ConfigIssue,
+  type ConfigRecommendation,
+  type ConfigFix,
+  type HealingResult as ConfigHealingResult,
+  type DriftAnalysis,
+  type StalenessAnalysis,
+} from '../config/self_healing.js';
+
+// Re-export workspace lock for concurrent bootstrap protection
+export {
+  acquireWorkspaceLock,
+  cleanupWorkspaceLock,
+  type WorkspaceLockState,
+  type WorkspaceLockHandle,
+  type WorkspaceLockOptions,
+} from '../integration/workspace_lock.js';

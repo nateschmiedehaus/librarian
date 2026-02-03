@@ -4,6 +4,7 @@ import { randomUUID, createHash } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { getErrorMessage } from '../utils/errors.js';
+import { logWarning } from '../telemetry/logger.js';
 import { withTimeout, getResultError } from '../core/result.js';
 import { removeControlChars } from '../security/sanitization.js';
 import type { LibrarianStorage, MultiVectorRecord } from '../storage/types.js';
@@ -414,6 +415,28 @@ export class IndexLibrarian implements IndexingAgent {
         errors.push({ path: 'graph_metrics', error: message, recoverable: true });
       }
     }
+
+    // Resolve external call edges to actual function IDs now that all files are indexed
+    // This enables accurate cross-file call graph queries
+    try {
+      const resolveResult = await this.resolveExternalCallEdges();
+      if (resolveResult.resolved > 0) {
+        // Log resolution stats for debugging
+        const { resolved, total } = resolveResult;
+        const pct = total > 0 ? Math.round((resolved / total) * 100) : 0;
+        // Non-blocking: just track for debugging
+        void globalEventBus.emit({
+          type: 'index:external_edges_resolved',
+          resolved,
+          total,
+          percentage: pct,
+        } as unknown as Parameters<typeof globalEventBus.emit>[0]);
+      }
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      errors.push({ path: 'external_edge_resolution', error: message, recoverable: true });
+    }
+
     if (ownsAccumulator) {
       this.graphAccumulator = null;
     }
@@ -679,7 +702,7 @@ export class IndexLibrarian implements IndexingAgent {
           const modelId = requireEmbeddingModelId(result.modelId, `function:${target.fn.id}`);
           validateEmbedding(result.embedding, this.config.embeddingDimension);
           functionEmbeddings.push({
-            entityId: target.fn.id,
+            entityId: `${target.fn.filePath}:${target.fn.name}`,
             embedding: result.embedding,
             metadata: {
               modelId,
@@ -744,7 +767,7 @@ export class IndexLibrarian implements IndexingAgent {
             const modelId = requireEmbeddingModelId(result.modelId, `module:${module.id}`);
             validateEmbedding(result.embedding, this.config.embeddingDimension);
             moduleEmbedding = {
-              entityId: module.id,
+              entityId: module.path,
               embedding: result.embedding,
               metadata: {
                 modelId,
@@ -1455,7 +1478,10 @@ export class IndexLibrarian implements IndexingAgent {
     needsModuleEmbedding: boolean
   ): Promise<MultiVectorRecord | null> {
     if (!this.storage) return null;
-    const existing = await this.storage.getMultiVector(module.id, 'module').catch(() => null);
+    const existing = await this.storage.getMultiVector(module.id, 'module').catch((err) => {
+      logWarning('[index_librarian] Failed to fetch existing multi-vector record', { moduleId: module.id, error: getErrorMessage(err) });
+      return null;
+    });
     if (existing && !needsModuleEmbedding) return null;
     // SECURITY: Validate embedding model BEFORE any operations.
     // Trust boundary: config is populated by internal IndexLibrarian constructor,
@@ -1488,7 +1514,7 @@ export class IndexLibrarian implements IndexingAgent {
       );
       this.governor?.recordTokens(tokenCount);
       return {
-        entityId: module.id,
+        entityId: module.path,
         entityType: 'module',
         payload,
         modelId: payload.modelId ?? modelId,
@@ -1552,6 +1578,90 @@ export class IndexLibrarian implements IndexingAgent {
     this.stats.averageFileProcessingMs =
       this.totalProcessingTime / this.stats.totalFilesIndexed;
     this.stats.lastIndexingTime = new Date();
+  }
+
+  /**
+   * Resolve external call edges to actual function IDs.
+   *
+   * During file-by-file indexing, cross-file function calls are stored with
+   * "external:functionName" as the toId because the target function may not
+   * have been indexed yet. This method resolves those external references
+   * to actual function IDs after all files have been processed.
+   *
+   * This enables accurate call graph queries like "what functions call X?"
+   */
+  async resolveExternalCallEdges(): Promise<{ resolved: number; total: number }> {
+    if (!this.storage) return { resolved: 0, total: 0 };
+
+    // Get all edges with external: prefix in toId
+    const externalEdges = await this.storage.getGraphEdges({
+      edgeTypes: ['calls'],
+    });
+
+    const unresolvedEdges = externalEdges.filter(
+      (edge) => edge.toId.startsWith('external:')
+    );
+
+    if (unresolvedEdges.length === 0) {
+      return { resolved: 0, total: 0 };
+    }
+
+    // Build a map of function name -> function ID(s)
+    // We need to get all functions to build this map
+    const allFunctions = await this.storage.getFunctions({ limit: 100000 });
+    const functionsByName = new Map<string, FunctionKnowledge[]>();
+    for (const fn of allFunctions) {
+      const list = functionsByName.get(fn.name) ?? [];
+      list.push(fn);
+      functionsByName.set(fn.name, list);
+    }
+
+    // Resolve each external edge
+    const resolvedEdges: GraphEdge[] = [];
+    const now = new Date();
+
+    for (const edge of unresolvedEdges) {
+      const targetName = edge.toId.slice('external:'.length);
+      const candidates = functionsByName.get(targetName);
+
+      if (!candidates || candidates.length === 0) {
+        // Still external - keep as is
+        continue;
+      }
+
+      // If there's exactly one match, we can confidently resolve it
+      // If there are multiple matches, pick the first one but mark with lower confidence
+      const target = candidates[0];
+      const isAmbiguous = candidates.length > 1;
+
+      // Recompute confidence for resolved edge
+      const hasSourceLine = edge.sourceLine != null;
+      const confidence = computeCallEdgeConfidence(
+        hasSourceLine,
+        true, // targetResolved
+        'ts-morph', // Default parser assumption
+        candidates.length
+      );
+
+      resolvedEdges.push({
+        fromId: edge.fromId,
+        fromType: edge.fromType,
+        toId: target.id,
+        toType: 'function',
+        edgeType: 'calls',
+        sourceFile: edge.sourceFile,
+        sourceLine: edge.sourceLine,
+        confidence: isAmbiguous ? Math.min(confidence, 0.75) : confidence,
+        computedAt: now,
+      });
+    }
+
+    // Upsert resolved edges (this will update the existing external: edges)
+    if (resolvedEdges.length > 0) {
+      await this.storage.upsertGraphEdges(resolvedEdges);
+    }
+
+    return { resolved: resolvedEdges.length, total: unresolvedEdges.length };
   }
 }
 

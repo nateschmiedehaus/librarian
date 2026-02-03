@@ -7,6 +7,7 @@ import {
   type LlmServiceAdapter,
 } from '../adapters/llm_service.js';
 import { getErrorMessage } from '../utils/errors.js';
+import { logWarning } from '../telemetry/logger.js';
 import type { LibrarianStorage, EvolutionOutcome } from '../storage/types.js';
 import type {
   ContextPack,
@@ -55,21 +56,22 @@ export interface PackRankingResult {
 
 const DEFAULT_MAX_PACKS = 2000;
 const SUMMARY_CHAR_LIMIT = 240;
-type TaskTaxonomy = 'bug_fix' | 'feature' | 'refactor' | 'review';
+type TaskTaxonomy = 'bug_fix' | 'feature' | 'refactor' | 'review' | 'guidance';
 type PackDepth = 'L0' | 'L1' | 'L2' | 'L3';
 
 const DEPTH_PACK_WEIGHTS: Record<PackDepth, Partial<Record<ContextPackType, number>>> = {
-  L0: { function_context: 1.2, module_context: 0.9, change_impact: 0.3, decision_context: 0.4, pattern_context: 0.4, similar_tasks: 0.4 },
-  L1: { function_context: 1.1, module_context: 1.1, change_impact: 0.8, decision_context: 0.6, pattern_context: 0.7, similar_tasks: 0.6 },
-  L2: { function_context: 1.0, module_context: 1.2, change_impact: 1.2, decision_context: 0.8, pattern_context: 0.9, similar_tasks: 0.8 },
-  L3: { function_context: 0.9, module_context: 1.2, change_impact: 1.3, decision_context: 1.1, pattern_context: 1.2, similar_tasks: 1.2 },
+  L0: { function_context: 1.2, module_context: 0.9, change_impact: 0.3, decision_context: 0.4, pattern_context: 0.4, similar_tasks: 0.4, doc_context: 0.8, project_understanding: 1.5 },
+  L1: { function_context: 1.1, module_context: 1.1, change_impact: 0.8, decision_context: 0.6, pattern_context: 0.7, similar_tasks: 0.6, doc_context: 1.0, project_understanding: 1.8 },
+  L2: { function_context: 1.0, module_context: 1.2, change_impact: 1.2, decision_context: 0.8, pattern_context: 0.9, similar_tasks: 0.8, doc_context: 1.2, project_understanding: 2.0 },
+  L3: { function_context: 0.9, module_context: 1.2, change_impact: 1.3, decision_context: 1.1, pattern_context: 1.2, similar_tasks: 1.2, doc_context: 1.3, project_understanding: 2.0 },
 };
 
 const TASK_PACK_WEIGHTS: Record<TaskTaxonomy, Partial<Record<ContextPackType, number>>> = {
-  bug_fix: { function_context: 1.2, module_context: 1.0, change_impact: 0.9, decision_context: 0.7, pattern_context: 0.7, similar_tasks: 0.8 },
-  feature: { function_context: 0.9, module_context: 1.3, change_impact: 1.0, decision_context: 0.9, pattern_context: 1.2, similar_tasks: 0.8 },
-  refactor: { function_context: 0.8, module_context: 1.1, change_impact: 1.4, decision_context: 0.8, pattern_context: 1.0, similar_tasks: 1.0 },
-  review: { function_context: 0.9, module_context: 1.0, change_impact: 1.1, decision_context: 1.2, pattern_context: 1.2, similar_tasks: 1.2 },
+  bug_fix: { function_context: 1.2, module_context: 1.0, change_impact: 0.9, decision_context: 0.7, pattern_context: 0.7, similar_tasks: 0.8, doc_context: 0.5, project_understanding: 0.3 },
+  feature: { function_context: 0.9, module_context: 1.3, change_impact: 1.0, decision_context: 0.9, pattern_context: 1.2, similar_tasks: 0.8, doc_context: 1.0, project_understanding: 1.0 },
+  refactor: { function_context: 0.8, module_context: 1.1, change_impact: 1.4, decision_context: 0.8, pattern_context: 1.0, similar_tasks: 1.0, doc_context: 0.6, project_understanding: 0.4 },
+  review: { function_context: 0.9, module_context: 1.0, change_impact: 1.1, decision_context: 1.2, pattern_context: 1.2, similar_tasks: 1.2, doc_context: 1.1, project_understanding: 0.8 },
+  guidance: { function_context: 0.4, module_context: 0.6, change_impact: 0.3, decision_context: 1.0, pattern_context: 0.8, similar_tasks: 0.5, doc_context: 2.0, project_understanding: 2.5 },
 };
 
 const BUG_KEYWORDS = ['error', 'exception', 'regression', 'failure', 'bug', 'fix', 'crash', 'panic'];
@@ -92,7 +94,10 @@ export async function generateContextPacks(
   const functionsByPath = groupFunctionsByPath(functions);
   const force = options.force ?? false;
   const includeSupplemental = options.includeSupplemental ?? true;
-  const storedVersion = await storage.getVersion().catch(() => null);
+  const storedVersion = await storage.getVersion().catch((err) => {
+    logWarning('[packs] Failed to retrieve stored version', { error: getErrorMessage(err) });
+    return null;
+  });
   const version = options.version ?? storedVersion ?? getCurrentVersion();
   const workspaceRoot = await resolveWorkspaceRoot(storage);
   const patternFacts = includeSupplemental ? await collectPatternFacts(storage) : emptyPatternFacts();
@@ -128,15 +133,15 @@ export async function generateContextPacks(
   if (includeFunctionPacks) {
     for (const fn of functions) {
       if (tasks.length >= maxPacks) break;
-      if (force || !(await storage.getContextPackForTarget(fn.id, 'function_context'))) enqueuePack(() => buildFunctionPack(fn, summarizer));
+      if (force || !(await storage.getContextPackForTarget(fn.id, 'function_context'))) enqueuePack(() => buildFunctionPack(fn, summarizer, storage));
     }
   }
   if (includeModulePacks) {
     for (const mod of modules) {
       if (tasks.length >= maxPacks) break;
-      if (force || !(await storage.getContextPackForTarget(mod.id, 'module_context'))) enqueuePack(() => buildModulePack(mod, functionsByPath.get(mod.path) ?? [], summarizer));
+      if (force || !(await storage.getContextPackForTarget(mod.id, 'module_context'))) enqueuePack(() => buildModulePack(mod, functionsByPath.get(mod.path) ?? [], summarizer, storage));
       if (tasks.length >= maxPacks) break;
-      if (force || !(await storage.getContextPackForTarget(mod.id, 'change_impact'))) enqueuePack(() => buildChangeImpactPack(mod, functionsByPath.get(mod.path) ?? [], summarizer));
+      if (force || !(await storage.getContextPackForTarget(mod.id, 'change_impact'))) enqueuePack(() => buildChangeImpactPack(mod, functionsByPath.get(mod.path) ?? [], summarizer, storage));
       if (!includeSupplemental || tasks.length >= maxPacks) continue;
       const patternNotes = patternFacts.patternsByFile.get(mod.path) ?? []; const antiNotes = patternFacts.antiPatternsByFile.get(mod.path) ?? [];
       if (patternNotes.length || antiNotes.length) {
@@ -160,8 +165,22 @@ export async function generateContextPacks(
   );
 }
 
+/**
+ * Check if a path is from eval-corpus or external test fixtures.
+ * These should be heavily penalized in query results to prevent pollution.
+ */
+function isEvalCorpusPath(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const normalizedPath = filePath.toLowerCase();
+  return normalizedPath.includes('eval-corpus') ||
+         normalizedPath.includes('external-repos') ||
+         normalizedPath.includes('test/fixtures') ||
+         normalizedPath.includes('test-fixtures');
+}
+
 export function rankContextPacks(input: PackRankingInput): PackRankingResult {
-  const maxPacks = Math.max(1, input.maxPacks ?? 10);
+  // Default to L1 pack limit (6) for agent ergonomics - reduced from previous 10
+  const maxPacks = Math.max(1, input.maxPacks ?? 6);
   const depth = input.depth ?? 'L1';
   const taskType = normalizeTaskType(input.taskType);
   const deduped = new Map<string, ContextPack>();
@@ -172,7 +191,13 @@ export function rankContextPacks(input: PackRankingInput): PackRankingResult {
   const scored = Array.from(deduped.values()).map((pack) => {
     const score = resolvePackScore(pack, input.scoreByTarget);
     const weightedScore = applyPersonaWeight(pack, score, depth, taskType);
-    return { pack, score: weightedScore };
+
+    // Apply heavy penalty (0.1x) to eval-corpus and test fixture paths
+    // This is defense-in-depth for any already-indexed files that should be excluded
+    const hasEvalCorpusFile = pack.relatedFiles.some(isEvalCorpusPath);
+    const finalScore = hasEvalCorpusFile ? weightedScore * 0.1 : weightedScore;
+
+    return { pack, score: finalScore };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -187,6 +212,13 @@ export function rankContextPacks(input: PackRankingInput): PackRankingResult {
 function normalizeTaskType(taskType?: string): TaskTaxonomy {
   const normalized = (taskType ?? '').toLowerCase().replace(/[\s-]+/g, '_');
   if (!normalized) return 'feature';
+  // Guidance/meta queries should boost documentation and project understanding
+  // Project-level queries like "what does this do" should also use guidance
+  if (normalized.includes('guidance') || normalized.includes('meta') || normalized.includes('how_to') ||
+      normalized.includes('overview') || normalized.includes('understand') || normalized.includes('learn') ||
+      normalized.includes('documentation') || normalized.includes('agent') ||
+      normalized.includes('project') || normalized.includes('purpose') || normalized.includes('architecture') ||
+      normalized.includes('codebase') || normalized.includes('what_does')) return 'guidance';
   if (normalized.includes('bug') || normalized.includes('fix') || normalized.includes('issue')) return 'bug_fix';
   if (normalized.includes('refactor') || normalized.includes('cleanup') || normalized.includes('migrate')) return 'refactor';
   if (normalized.includes('review') || normalized.includes('audit') || normalized.includes('analysis')) return 'review';
@@ -245,20 +277,151 @@ function extractDependencyCount(keyFacts: string[]): number {
   return 0;
 }
 
-async function buildFunctionPack(fn: FunctionKnowledge, summarizer: PackSummarizer): Promise<ContextPack> {
+interface FunctionGraphContext {
+  callers: string[];
+  callees: string[];
+  pageRank?: number;
+  centrality?: number;
+}
+
+async function getFunctionGraphContext(
+  fn: FunctionKnowledge,
+  storage: LibrarianStorage | null
+): Promise<FunctionGraphContext> {
+  const result: FunctionGraphContext = { callers: [], callees: [] };
+  if (!storage) return result;
+
+  try {
+    // Get graph edges for this function
+    const edges = await storage.getGraphEdges({
+      edgeTypes: ['calls'],
+      limit: 50,
+    });
+
+    const fnId = fn.id;
+    const fnPathId = `${fn.filePath}:${fn.name}`;
+
+    for (const edge of edges) {
+      // Check if this function is called by others (incoming calls)
+      if (edge.toId === fnId || edge.toId === fnPathId || edge.toId === fn.name) {
+        const callerName = extractEntityName(edge.fromId);
+        if (callerName && !result.callers.includes(callerName)) {
+          result.callers.push(callerName);
+        }
+      }
+      // Check if this function calls others (outgoing calls)
+      if (edge.fromId === fnId || edge.fromId === fnPathId || edge.fromId === fn.name) {
+        const calleeName = extractEntityName(edge.toId);
+        if (calleeName && !result.callees.includes(calleeName)) {
+          result.callees.push(calleeName);
+        }
+      }
+    }
+
+    // Try to get graph metrics for PageRank/centrality
+    const metrics = await storage.getGraphMetrics({ entityIds: [fnId], limit: 1 });
+    if (metrics.length > 0) {
+      result.pageRank = metrics[0].pagerank;
+      result.centrality = metrics[0].betweenness;
+    }
+  } catch {
+    // Graph context is optional - fail silently
+  }
+
+  return result;
+}
+
+function extractEntityName(id: string): string {
+  // Extract readable name from various ID formats
+  // Format: "path/to/file.ts:functionName" -> "functionName"
+  // Format: "functionName" -> "functionName"
+  // Format: "path/to/file.ts" -> "file.ts"
+  if (id.includes(':')) {
+    return id.split(':').pop() || id;
+  }
+  if (id.includes('/')) {
+    return path.basename(id);
+  }
+  return id;
+}
+
+function extractReturnType(signature: string): string | null {
+  // Extract return type from TypeScript/JavaScript signature
+  // Format: "function name(args): ReturnType" -> "ReturnType"
+  // Format: "(args) => ReturnType" -> "ReturnType"
+  // Format: "name(args): Promise<T>" -> "Promise<T>"
+  const colonMatch = signature.match(/\):\s*(.+)$/);
+  if (colonMatch) {
+    return colonMatch[1].trim();
+  }
+  const arrowMatch = signature.match(/=>\s*(.+)$/);
+  if (arrowMatch) {
+    return arrowMatch[1].trim();
+  }
+  return null;
+}
+
+async function buildFunctionPack(
+  fn: FunctionKnowledge,
+  summarizer: PackSummarizer,
+  storage: LibrarianStorage | null = null
+): Promise<ContextPack> {
   const snippet = await loadFunctionSnippet(fn);
   const summaryFallback = fn.purpose || `Function ${fn.name} in ${path.basename(fn.filePath)}`;
   const summary = await summarizer.summarize('function', buildFunctionSummaryInput(fn), summaryFallback);
+  // Use path-based targetId to align with embedding entity_id format
+  // This enables semantic search results to match context packs
+  const targetId = `${fn.filePath}:${fn.name}`;
+
+  // Get graph context for semantic facts
+  const graphContext = await getFunctionGraphContext(fn, storage);
+
+  // Build semantic keyFacts
+  const keyFacts: string[] = [];
+
+  // Always include signature (useful for understanding the function)
+  keyFacts.push(`Signature: ${fn.signature}`);
+
+  // Add purpose if available (most useful fact for agents)
+  if (fn.purpose) {
+    keyFacts.push(`Purpose: ${fn.purpose}`);
+  }
+
+  // Extract and add return type
+  const returnType = extractReturnType(fn.signature);
+  if (returnType) {
+    keyFacts.push(`Returns: ${returnType}`);
+  }
+
+  // Add caller information (who uses this function)
+  if (graphContext.callers.length > 0) {
+    const callerList = graphContext.callers.slice(0, 5).join(', ');
+    const suffix = graphContext.callers.length > 5 ? ` (+${graphContext.callers.length - 5} more)` : '';
+    keyFacts.push(`Called by: ${callerList}${suffix}`);
+  }
+
+  // Add callee information (what this function calls)
+  if (graphContext.callees.length > 0) {
+    const calleeList = graphContext.callees.slice(0, 5).join(', ');
+    const suffix = graphContext.callees.length > 5 ? ` (+${graphContext.callees.length - 5} more)` : '';
+    keyFacts.push(`Calls: ${calleeList}${suffix}`);
+  }
+
+  // Add importance metrics if available
+  if (graphContext.pageRank !== undefined && graphContext.pageRank > 0.01) {
+    const importance = graphContext.pageRank >= 0.1 ? 'high' : graphContext.pageRank >= 0.05 ? 'medium' : 'low';
+    keyFacts.push(`Importance: ${importance} (PageRank: ${graphContext.pageRank.toFixed(3)})`);
+  }
+
+  // Add file context (simplified)
+  keyFacts.push(`File: ${path.basename(fn.filePath)}`);
+
   return {
     packId: randomUUID(),
     packType: 'function_context',
-    targetId: fn.id,
+    targetId,
     summary,
-    keyFacts: [
-      `Signature: ${fn.signature}`,
-      `Lines: ${fn.startLine}-${fn.endLine}`,
-      `File: ${fn.filePath}`,
-    ],
+    keyFacts,
     codeSnippets: snippet ? [snippet] : [],
     relatedFiles: [fn.filePath],
     confidence: fn.confidence,
@@ -272,25 +435,147 @@ async function buildFunctionPack(fn: FunctionKnowledge, summarizer: PackSummariz
   };
 }
 
+interface ModuleGraphContext {
+  importedByCount: number;
+  importsCount: number;
+  pageRank?: number;
+  centrality?: number;
+  isBridge?: boolean;
+}
+
+async function getModuleGraphContext(
+  mod: ModuleKnowledge,
+  storage: LibrarianStorage | null
+): Promise<ModuleGraphContext> {
+  const result: ModuleGraphContext = { importedByCount: 0, importsCount: mod.dependencies.length };
+  if (!storage) return result;
+
+  try {
+    // Get edges where this module is imported by others
+    const incomingEdges = await storage.getGraphEdges({
+      toIds: [mod.id, mod.path],
+      edgeTypes: ['imports'],
+      limit: 100,
+    });
+    result.importedByCount = incomingEdges.length;
+
+    // Try to get graph metrics
+    const metrics = await storage.getGraphMetrics({ entityIds: [mod.id], limit: 1 });
+    if (metrics.length > 0) {
+      result.pageRank = metrics[0].pagerank;
+      result.centrality = metrics[0].betweenness;
+      result.isBridge = metrics[0].isBridge;
+    }
+  } catch {
+    // Graph context is optional
+  }
+
+  return result;
+}
+
+function categorizeExports(exports: string[]): { types: string[]; functions: string[]; constants: string[] } {
+  const types: string[] = [];
+  const functions: string[] = [];
+  const constants: string[] = [];
+
+  for (const exp of exports) {
+    // Heuristic categorization based on naming conventions
+    if (exp.startsWith('I') && exp[1] && exp[1] === exp[1].toUpperCase()) {
+      // Interface (e.g., IStorage, IConfig)
+      types.push(exp);
+    } else if (exp[0] === exp[0].toUpperCase() && !exp.includes('_')) {
+      // PascalCase - likely a type, class, or React component
+      types.push(exp);
+    } else if (exp === exp.toUpperCase()) {
+      // ALL_CAPS - likely a constant
+      constants.push(exp);
+    } else {
+      // camelCase - likely a function
+      functions.push(exp);
+    }
+  }
+
+  return { types, functions, constants };
+}
+
 async function buildModulePack(
   mod: ModuleKnowledge,
   functions: FunctionKnowledge[],
-  summarizer: PackSummarizer
+  summarizer: PackSummarizer,
+  storage: LibrarianStorage | null = null
 ): Promise<ContextPack> {
   const snippet = await loadModuleSnippet(mod.path);
   const summaryFallback = mod.purpose || `Module ${path.basename(mod.path, path.extname(mod.path))}`;
   const summary = await summarizer.summarize('module', buildModuleSummaryInput(mod, functions), summaryFallback);
   const relatedFiles = collectRelatedFiles(mod);
+  // Use path-based targetId to align with embedding entity_id format
+  // This enables semantic search results to match context packs
+  const targetId = mod.path;
+
+  // Get graph context for semantic facts
+  const graphContext = await getModuleGraphContext(mod, storage);
+  const exportCategories = categorizeExports(mod.exports);
+
+  // Build semantic keyFacts
+  const keyFacts: string[] = [];
+
+  // Add purpose if available (most useful for agents)
+  if (mod.purpose) {
+    keyFacts.push(`Purpose: ${mod.purpose}`);
+  }
+
+  // Categorized exports (more useful than raw list)
+  if (exportCategories.functions.length > 0) {
+    const fnList = exportCategories.functions.slice(0, 4).join(', ');
+    const suffix = exportCategories.functions.length > 4 ? ` (+${exportCategories.functions.length - 4} more)` : '';
+    keyFacts.push(`Exports functions: ${fnList}${suffix}`);
+  }
+  if (exportCategories.types.length > 0) {
+    const typeList = exportCategories.types.slice(0, 4).join(', ');
+    const suffix = exportCategories.types.length > 4 ? ` (+${exportCategories.types.length - 4} more)` : '';
+    keyFacts.push(`Exports types: ${typeList}${suffix}`);
+  }
+  if (exportCategories.constants.length > 0) {
+    const constList = exportCategories.constants.slice(0, 3).join(', ');
+    const suffix = exportCategories.constants.length > 3 ? ` (+${exportCategories.constants.length - 3} more)` : '';
+    keyFacts.push(`Exports constants: ${constList}${suffix}`);
+  }
+
+  // Import/dependency summary (count is more useful than list of paths)
+  if (mod.dependencies.length > 0) {
+    const localDeps = mod.dependencies.filter(d => d.startsWith('.') || d.startsWith('/'));
+    const externalDeps = mod.dependencies.filter(d => !d.startsWith('.') && !d.startsWith('/'));
+    const parts: string[] = [];
+    if (localDeps.length > 0) parts.push(`${localDeps.length} local`);
+    if (externalDeps.length > 0) parts.push(`${externalDeps.length} external`);
+    keyFacts.push(`Imports: ${parts.join(', ')} modules`);
+  }
+
+  // Usage information (who imports this module)
+  if (graphContext.importedByCount > 0) {
+    keyFacts.push(`Imported by: ${graphContext.importedByCount} modules`);
+  }
+
+  // Key functions in this module
+  if (functions.length > 0) {
+    const fnNames = functions.map(fn => fn.name).slice(0, 5).join(', ');
+    const suffix = functions.length > 5 ? ` (+${functions.length - 5} more)` : '';
+    keyFacts.push(`Contains: ${fnNames}${suffix}`);
+  }
+
+  // Structural importance
+  if (graphContext.isBridge) {
+    keyFacts.push('Role: Bridge module (connects different parts of codebase)');
+  } else if (graphContext.pageRank !== undefined && graphContext.pageRank >= 0.05) {
+    keyFacts.push(`Role: Core module (high PageRank: ${graphContext.pageRank.toFixed(3)})`);
+  }
+
   return {
     packId: randomUUID(),
     packType: 'module_context',
-    targetId: mod.id,
+    targetId,
     summary,
-    keyFacts: [
-      `Exports: ${mod.exports.slice(0, 5).join(', ') || 'none'}`,
-      `Dependencies: ${mod.dependencies.slice(0, 5).join(', ') || 'none'}`,
-      `Functions: ${functions.map((fn) => fn.name).slice(0, 5).join(', ') || 'none'}`,
-    ],
+    keyFacts,
     codeSnippets: snippet ? [snippet] : [],
     relatedFiles,
     confidence: mod.confidence,
@@ -307,21 +592,69 @@ async function buildModulePack(
 async function buildChangeImpactPack(
   mod: ModuleKnowledge,
   functions: FunctionKnowledge[],
-  summarizer: PackSummarizer
+  summarizer: PackSummarizer,
+  storage: LibrarianStorage | null = null
 ): Promise<ContextPack> {
   const relatedFiles = collectRelatedFiles(mod);
   const summaryFallback = `Changing ${path.basename(mod.path)} may affect ${relatedFiles.slice(0, 3).join(', ') || 'dependent modules'}`;
   const summary = await summarizer.summarize('change_impact', buildImpactSummaryInput(mod, functions), summaryFallback);
+  // Use path-based targetId to align with embedding entity_id format
+  const targetId = mod.path;
+
+  // Get graph context for impact analysis
+  const graphContext = await getModuleGraphContext(mod, storage);
+
+  // Build semantic keyFacts focused on change impact
+  const keyFacts: string[] = [];
+
+  // Impact radius (most important for change impact)
+  if (graphContext.importedByCount > 0) {
+    const riskLevel = graphContext.importedByCount >= 20 ? 'high' : graphContext.importedByCount >= 5 ? 'medium' : 'low';
+    keyFacts.push(`Impact radius: ${graphContext.importedByCount} modules depend on this (${riskLevel} risk)`);
+  } else {
+    keyFacts.push('Impact radius: No direct dependents (isolated module)');
+  }
+
+  // Public API changes - what exports could break consumers
+  if (mod.exports.length > 0) {
+    const exportList = mod.exports.slice(0, 5).join(', ');
+    const suffix = mod.exports.length > 5 ? ` (+${mod.exports.length - 5} more)` : '';
+    keyFacts.push(`Breaking change risk: ${exportList}${suffix}`);
+  }
+
+  // Functions that may need updating
+  if (functions.length > 0) {
+    const publicFns = functions.filter(fn => mod.exports.includes(fn.name));
+    if (publicFns.length > 0) {
+      const fnList = publicFns.map(fn => fn.name).slice(0, 4).join(', ');
+      keyFacts.push(`Public functions: ${fnList}`);
+    }
+  }
+
+  // Downstream dependencies (what this module depends on)
+  if (mod.dependencies.length > 0) {
+    const localDeps = mod.dependencies.filter(d => d.startsWith('.') || d.startsWith('/'));
+    if (localDeps.length > 0) {
+      keyFacts.push(`Depends on: ${localDeps.length} local modules (changes there affect this)`);
+    }
+  }
+
+  // Bridge module warning
+  if (graphContext.isBridge) {
+    keyFacts.push('Warning: Bridge module - changes may cascade across codebase sections');
+  }
+
+  // High centrality warning
+  if (graphContext.centrality !== undefined && graphContext.centrality >= 0.1) {
+    keyFacts.push(`Centrality: High (${graphContext.centrality.toFixed(3)}) - critical path for many modules`);
+  }
+
   return {
     packId: randomUUID(),
     packType: 'change_impact',
-    targetId: mod.id,
+    targetId,
     summary,
-    keyFacts: [
-      `Module: ${mod.path}`,
-      `Exports: ${mod.exports.slice(0, 5).join(', ') || 'none'}`,
-      `Dependencies: ${mod.dependencies.slice(0, 5).join(', ') || 'none'}`,
-    ],
+    keyFacts,
     codeSnippets: [],
     relatedFiles,
     confidence: mod.confidence,
@@ -350,15 +683,18 @@ async function buildPatternPack(
     buildPatternSummaryInput(mod, patterns, antiPatterns),
     summaryFallback
   );
+  // Use path-based targetId to align with embedding entity_id format
+  const targetId = mod.path;
   return {
     packId: randomUUID(),
     packType: 'pattern_context',
-    targetId: mod.id,
+    targetId,
     summary,
     keyFacts: [
       `Module: ${mod.path}`,
       patterns.length ? `Patterns: ${formatList(patterns, 6)}` : '',
       antiPatterns.length ? `Anti-patterns: ${formatList(antiPatterns, 4)}` : '',
+      `ID: ${mod.id}`, // Keep original ID for reference
     ].filter(Boolean),
     codeSnippets: [],
     relatedFiles,
@@ -386,14 +722,17 @@ async function buildDecisionPack(
     buildDecisionSummaryInput(mod, decisions),
     summaryFallback
   );
+  // Use path-based targetId to align with embedding entity_id format
+  const targetId = mod.path;
   return {
     packId: randomUUID(),
     packType: 'decision_context',
-    targetId: mod.id,
+    targetId,
     summary,
     keyFacts: [
       `Module: ${mod.path}`,
       `Decisions: ${formatList(decisions, 6)}`,
+      `ID: ${mod.id}`, // Keep original ID for reference
     ],
     codeSnippets: [],
     relatedFiles,
@@ -421,14 +760,17 @@ async function buildSimilarTasksPack(
     buildTaskSummaryInput(mod, tasks),
     summaryFallback
   );
+  // Use path-based targetId to align with embedding entity_id format
+  const targetId = mod.path;
   return {
     packId: randomUUID(),
     packType: 'similar_tasks',
-    targetId: mod.id,
+    targetId,
     summary,
     keyFacts: [
       `Module: ${mod.path}`,
       `Recent tasks: ${formatList(tasks, 6)}`,
+      `ID: ${mod.id}`, // Keep original ID for reference
     ],
     codeSnippets: [],
     relatedFiles,

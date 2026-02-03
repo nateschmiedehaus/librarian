@@ -14,6 +14,7 @@ import {
 } from './llm_env.js';
 import { requireProviders } from './provider_check.js';
 import { safeJsonParse, getResultError } from '../utils/safe_json.js';
+import { withTimeout } from '../utils/async.js';
 import {
   type LlmServiceAdapter,
   resolveLlmServiceAdapter,
@@ -1424,27 +1425,6 @@ function isTransientLlmError(error: unknown): boolean {
   );
 }
 
-function createTimeoutError(timeoutMs: number): Error & { code?: string } {
-  const error = new Error(`LLM request timed out after ${timeoutMs}ms`) as Error & { code?: string };
-  error.code = 'ETIMEDOUT';
-  return error;
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  if (!timeoutMs || timeoutMs <= 0) return promise;
-  let timeoutId: NodeJS.Timeout | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(() => reject(createTimeoutError(timeoutMs)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
 function sleep(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1478,19 +1458,23 @@ export function createLlmPrimitiveExecutor(
     const totalAttempts = maxRetries + 1;
     for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
       try {
-        response = await withTimeout(llmService.chat({
-          provider: llmConfig.provider,
-          modelId: llmConfig.modelId,
-          messages: [
-            { role: 'system', content: LLM_EXECUTOR_SYSTEM_PROMPT },
-            { role: 'user', content: prompt },
-          ],
-          maxTokens: options.maxTokens ?? resolveQuantifiedValue(DEFAULT_LLM_MAX_TOKENS),
-          temperature: resolveQuantifiedValue(DEFAULT_LLM_TEMPERATURE),
-          governorContext: context.governor,
-          outputSchema,
-          disableTools: true,
-        }), timeoutMs);
+        response = await withTimeout(
+          llmService.chat({
+            provider: llmConfig.provider,
+            modelId: llmConfig.modelId,
+            messages: [
+              { role: 'system', content: LLM_EXECUTOR_SYSTEM_PROMPT },
+              { role: 'user', content: prompt },
+            ],
+            maxTokens: options.maxTokens ?? resolveQuantifiedValue(DEFAULT_LLM_MAX_TOKENS),
+            temperature: resolveQuantifiedValue(DEFAULT_LLM_TEMPERATURE),
+            governorContext: context.governor,
+            outputSchema,
+            disableTools: true,
+          }),
+          timeoutMs,
+          { context: 'LLM request', errorCode: 'ETIMEDOUT' }
+        );
         break;
       } catch (error) {
         const transient = isTransientLlmError(error);

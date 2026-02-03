@@ -29,6 +29,12 @@ import type { AdrRecord } from '../../ingest/adr_indexer.js';
 import { resolveLlmServiceAdapter } from '../../adapters/llm_service.js';
 import { resolveLibrarianModelId } from '../../api/llm_env.js';
 import { buildLlmEvidence, type LlmEvidence } from './llm_evidence.js';
+import {
+  type ArgumentEdge,
+  type ArgumentEdgeType,
+  type ArgumentEntityType,
+  createArgumentEdge,
+} from '../../storage/types.js';
 
 const execAsync = promisify(exec);
 
@@ -40,6 +46,24 @@ export interface RationaleExtraction {
   rationale: EntityRationale;
   confidence: number;
   llmEvidence?: LlmEvidence;
+  /**
+   * Argument edges derived from rationale extraction.
+   *
+   * These edges capture the argumentative relationships between decisions,
+   * constraints, alternatives, assumptions, and evidence. Based on the
+   * Toulmin-IBIS hybrid argumentation model.
+   *
+   * Edge types generated:
+   * - decision → evidence: 'supports' (evidence supports the decision)
+   * - decision → constraint: 'qualifies' (constraint limits decision scope)
+   * - decision → alternative (rejected): 'contradicts' (mutually exclusive)
+   * - decision → assumption: 'warrants' (assumption warrants the decision)
+   * - decision → previous_decision: 'supersedes' (if replacing)
+   * - decision → dependency: 'depends_on_decision' (requires another decision)
+   *
+   * @see docs/research/ARGUMENTATION-STRUCTURES-FOR-CODE-REASONING.md
+   */
+  argumentEdges?: ArgumentEdge[];
 }
 
 export interface RationaleInput {
@@ -276,16 +300,26 @@ export async function extractRationaleSignals(input: RationaleInput): Promise<Ra
   if (hasAssumptions) confidence += 0.1;
   if (content.length > 0) confidence += 0.1;
 
+  // Build the rationale object
+  const rationale: EntityRationale = {
+    decisions,
+    constraints,
+    tradeoffs: deduplicateTradeoffs(tradeoffs),
+    alternatives: deduplicateAlternatives(alternatives),
+    assumptions: deduplicateAssumptions(assumptions),
+    risks,
+  };
+
+  // Generate argument edges from the extracted rationale
+  const argumentEdges = generateArgumentEdges(rationale, {
+    entityIdPrefix: input.entityName || 'rationale',
+    filePath: input.filePath,
+  });
+
   return {
-    rationale: {
-      decisions,
-      constraints,
-      tradeoffs: deduplicateTradeoffs(tradeoffs),
-      alternatives: deduplicateAlternatives(alternatives),
-      assumptions: deduplicateAssumptions(assumptions),
-      risks,
-    },
+    rationale,
     confidence: Math.min(confidence, 1.0),
+    argumentEdges: argumentEdges.length > 0 ? argumentEdges : undefined,
   };
 }
 
@@ -676,6 +710,347 @@ function deduplicateAssumptions(assumptions: Assumption[]): Assumption[] {
 }
 
 // ============================================================================
+// ARGUMENT EDGE GENERATION
+// Based on: docs/research/ARGUMENTATION-STRUCTURES-FOR-CODE-REASONING.md
+// ============================================================================
+
+/**
+ * Options for generating argument edges from rationale.
+ */
+export interface ArgumentEdgeGenerationOptions {
+  /** Entity ID prefix for generated node IDs (default: 'rationale') */
+  entityIdPrefix?: string;
+  /** File path for context in edge metadata */
+  filePath?: string;
+  /** Include edges with confidence below threshold (default: 0.5) */
+  minConfidence?: number;
+}
+
+/**
+ * Generate argument edges from extracted rationale.
+ *
+ * This function converts the flat rationale structure (decisions, constraints,
+ * alternatives, etc.) into a graph of argumentative relationships.
+ *
+ * Edge generation rules:
+ * 1. Evidence → Decision: 'supports' (evidence supports the decision)
+ * 2. Constraint → Decision: 'qualifies' (constraint limits decision scope)
+ * 3. Decision → Alternative: 'contradicts' (mutually exclusive approaches)
+ * 4. Assumption → Decision: 'warrants' (assumption justifies the decision)
+ * 5. New Decision → Old Decision: 'supersedes' (if replacing)
+ * 6. Decision → Dependency: 'depends_on_decision' (requires another decision)
+ * 7. Risk → Decision: 'rebuts' (risk provides defeating condition)
+ * 8. Tradeoff → Decision: 'qualifies' (tradeoff limits applicability)
+ *
+ * @param rationale - The extracted EntityRationale
+ * @param options - Generation options
+ * @returns Array of ArgumentEdge entries
+ *
+ * @example
+ * ```typescript
+ * const extraction = await extractRationaleSignals(input);
+ * const edges = generateArgumentEdges(extraction.rationale, {
+ *   entityIdPrefix: 'my-service',
+ *   filePath: 'src/service.ts',
+ * });
+ * // Returns edges like:
+ * // { sourceId: 'constraint:latency-req', targetId: 'ADR-001', type: 'qualifies', ... }
+ * ```
+ */
+export function generateArgumentEdges(
+  rationale: EntityRationale,
+  options: ArgumentEdgeGenerationOptions = {}
+): ArgumentEdge[] {
+  const {
+    entityIdPrefix = 'rationale',
+    filePath,
+    minConfidence = 0.5,
+  } = options;
+
+  const edges: ArgumentEdge[] = [];
+  const now = new Date().toISOString();
+
+  // Helper to create entity IDs
+  const makeId = (type: string, name: string): string => {
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .slice(0, 50);
+    return `${entityIdPrefix}:${type}:${slug}`;
+  };
+
+  // Helper to create edge ID
+  const makeEdgeId = (source: string, target: string, edgeType: string): string => {
+    return `edge:${edgeType}:${source.slice(-20)}->${target.slice(-20)}`;
+  };
+
+  // Process each decision
+  for (const decision of rationale.decisions) {
+    const decisionId = decision.id || makeId('decision', decision.title);
+
+    // 1. Constraints qualify decisions
+    for (const constraint of rationale.constraints) {
+      const constraintId = makeId('constraint', constraint.description);
+      const confidence = constraintTypeToConfidence(constraint.type);
+
+      if (confidence >= minConfidence) {
+        edges.push(
+          createArgumentEdge({
+            id: makeEdgeId(constraintId, decisionId, 'qualifies'),
+            sourceId: constraintId,
+            targetId: decisionId,
+            sourceType: 'constraint' as ArgumentEntityType,
+            targetType: 'decision' as ArgumentEntityType,
+            type: 'qualifies' as ArgumentEdgeType,
+            weight: confidence,
+            confidence,
+            metadata: {
+              qualifierCondition: constraint.description,
+              extractedFrom: 'adr',
+              ...(filePath && { filePath }),
+            },
+            computedAt: now,
+          })
+        );
+      }
+    }
+
+    // 2. Alternatives contradict decisions
+    for (const alternative of rationale.alternatives) {
+      const alternativeId = makeId('alternative', alternative.approach);
+      const confidence = 0.9; // High confidence for explicit rejection
+
+      edges.push(
+        createArgumentEdge({
+          id: makeEdgeId(decisionId, alternativeId, 'contradicts'),
+          sourceId: decisionId,
+          targetId: alternativeId,
+          sourceType: 'decision' as ArgumentEntityType,
+          targetType: 'alternative' as ArgumentEntityType,
+          type: 'contradicts' as ArgumentEdgeType,
+          weight: 1.0, // Contradictions are binary
+          confidence,
+          metadata: {
+            reason: alternative.rejected,
+            extractedFrom: alternative.source === 'LLM-inferred' ? 'llm_inference' : 'adr',
+            ...(filePath && { filePath }),
+          },
+          computedAt: now,
+        })
+      );
+    }
+
+    // 3. Assumptions warrant decisions
+    for (const assumption of rationale.assumptions) {
+      const assumptionId = makeId('assumption', assumption.assumption);
+      const confidence = assumption.validated ? 0.9 : 0.6;
+
+      if (confidence >= minConfidence) {
+        edges.push(
+          createArgumentEdge({
+            id: makeEdgeId(assumptionId, decisionId, 'warrants'),
+            sourceId: assumptionId,
+            targetId: decisionId,
+            sourceType: 'assumption' as ArgumentEntityType,
+            targetType: 'decision' as ArgumentEntityType,
+            type: 'warrants' as ArgumentEdgeType,
+            weight: 1.0, // Warrants are binary (apply or don't)
+            confidence,
+            metadata: {
+              warrantSource: assumption.evidence,
+              ruleType: assumption.validated ? 'strict' : 'defeasible',
+              extractedFrom: 'adr',
+              ...(filePath && { filePath }),
+            },
+            computedAt: now,
+          })
+        );
+      }
+    }
+
+    // 4. Supersession edges (decision supersedes previous decision)
+    if (decision.supersededBy) {
+      edges.push(
+        createArgumentEdge({
+          id: makeEdgeId(decision.supersededBy, decisionId, 'supersedes'),
+          sourceId: decision.supersededBy,
+          targetId: decisionId,
+          sourceType: 'decision' as ArgumentEntityType,
+          targetType: 'decision' as ArgumentEntityType,
+          type: 'supersedes' as ArgumentEdgeType,
+          weight: 1.0, // Supersession is binary
+          confidence: 0.95,
+          metadata: {
+            supersessionReason: `${decision.title} superseded`,
+            extractedFrom: 'adr',
+            ...(filePath && { filePath }),
+          },
+          computedAt: now,
+        })
+      );
+    }
+
+    // 5. Risks rebut decisions (provide defeating conditions)
+    for (const risk of rationale.risks) {
+      const riskId = makeId('risk', risk.risk);
+      const confidence = riskLevelToConfidence(risk.likelihood, risk.impact);
+
+      if (confidence >= minConfidence) {
+        edges.push(
+          createArgumentEdge({
+            id: makeEdgeId(riskId, decisionId, 'rebuts'),
+            sourceId: riskId,
+            targetId: decisionId,
+            sourceType: 'risk' as ArgumentEntityType,
+            targetType: 'decision' as ArgumentEntityType,
+            type: 'rebuts' as ArgumentEdgeType,
+            weight: 1.0, // Rebuttals are binary when active
+            confidence,
+            metadata: {
+              rebuttalCondition: risk.risk,
+              ruleType: 'defeasible',
+              extractedFrom: risk.mitigation ? 'adr' : 'llm_inference',
+              ...(risk.mitigation && { mitigation: risk.mitigation }),
+              ...(filePath && { filePath }),
+            },
+            computedAt: now,
+          })
+        );
+      }
+    }
+
+    // 6. Tradeoffs qualify decisions
+    for (const tradeoff of rationale.tradeoffs) {
+      const tradeoffId = makeId('tradeoff', `${tradeoff.gained}-over-${tradeoff.sacrificed}`);
+
+      edges.push(
+        createArgumentEdge({
+          id: makeEdgeId(tradeoffId, decisionId, 'qualifies'),
+          sourceId: tradeoffId,
+          targetId: decisionId,
+          sourceType: 'tradeoff' as ArgumentEntityType,
+          targetType: 'decision' as ArgumentEntityType,
+          type: 'qualifies' as ArgumentEdgeType,
+          weight: 0.8,
+          confidence: 0.85,
+          metadata: {
+            qualifierCondition: `Prioritized ${tradeoff.gained} over ${tradeoff.sacrificed}`,
+            strength: 0.8,
+            extractedFrom: tradeoff.rationale.includes('LLM') ? 'llm_inference' : 'comment',
+            ...(filePath && { filePath }),
+          },
+          computedAt: now,
+        })
+      );
+    }
+  }
+
+  // 7. Evidence supports decisions (from context/consequences in ADR)
+  // For decisions with consequences, create implicit evidence edges
+  for (const decision of rationale.decisions) {
+    if (decision.consequences && decision.consequences.length > 20) {
+      const decisionId = decision.id || makeId('decision', decision.title);
+      const evidenceId = makeId('evidence', `consequences-${decision.id || decision.title}`);
+
+      edges.push(
+        createArgumentEdge({
+          id: makeEdgeId(evidenceId, decisionId, 'supports'),
+          sourceId: evidenceId,
+          targetId: decisionId,
+          sourceType: 'evidence' as ArgumentEntityType,
+          targetType: 'decision' as ArgumentEntityType,
+          type: 'supports' as ArgumentEdgeType,
+          weight: 0.7,
+          confidence: 0.75,
+          metadata: {
+            evidenceRefs: [decision.consequences.slice(0, 200)],
+            extractedFrom: 'adr',
+            ...(filePath && { filePath }),
+          },
+          computedAt: now,
+        })
+      );
+    }
+  }
+
+  // 8. Decision dependency edges (inter-ADR dependencies)
+  // Look for references to other ADRs in decision context
+  for (const decision of rationale.decisions) {
+    const decisionId = decision.id || makeId('decision', decision.title);
+    const adrRefs = extractAdrReferences(decision.context + ' ' + decision.decision);
+
+    for (const refId of adrRefs) {
+      if (refId !== decision.id) {
+        edges.push(
+          createArgumentEdge({
+            id: makeEdgeId(decisionId, refId, 'depends_on_decision'),
+            sourceId: decisionId,
+            targetId: refId,
+            sourceType: 'decision' as ArgumentEntityType,
+            targetType: 'decision' as ArgumentEntityType,
+            type: 'depends_on_decision' as ArgumentEdgeType,
+            weight: 0.8,
+            confidence: 0.7,
+            metadata: {
+              extractedFrom: 'adr',
+              ...(filePath && { filePath }),
+            },
+            computedAt: now,
+          })
+        );
+      }
+    }
+  }
+
+  return edges;
+}
+
+/**
+ * Extract ADR references from text (e.g., "ADR-001", "ADR 5", "ADR#12").
+ */
+function extractAdrReferences(text: string): string[] {
+  const pattern = /ADR[-\s#]?(\d{1,4})/gi;
+  const matches = text.matchAll(pattern);
+  const refs: string[] = [];
+
+  for (const match of matches) {
+    const num = match[1];
+    refs.push(`ADR-${num.padStart(3, '0')}`);
+  }
+
+  return [...new Set(refs)];
+}
+
+/**
+ * Convert constraint type to confidence score.
+ */
+function constraintTypeToConfidence(type: ConstraintType): number {
+  switch (type) {
+    case 'regulatory':
+      return 0.95; // Regulatory constraints are highly certain
+    case 'technical':
+      return 0.85; // Technical constraints are usually well-defined
+    case 'business':
+      return 0.75; // Business constraints may be more fluid
+    case 'resource':
+      return 0.7; // Resource constraints can change
+    default:
+      return 0.6;
+  }
+}
+
+/**
+ * Convert risk levels to confidence score for rebuttal edge.
+ */
+function riskLevelToConfidence(likelihood: RiskLevel, impact: RiskLevel): number {
+  const likelihoodScore = { high: 0.9, medium: 0.6, low: 0.3 }[likelihood];
+  const impactScore = { high: 0.9, medium: 0.6, low: 0.3 }[impact];
+
+  // Combined confidence: higher if both likelihood and impact are significant
+  return Math.min(0.95, (likelihoodScore + impactScore) / 2 + 0.2);
+}
+
+// ============================================================================
 // LLM-ENHANCED EXTRACTION
 // ============================================================================
 
@@ -771,32 +1146,52 @@ Respond in JSON:
     const parsed = parseRationaleResponse(response.content);
 
     // Merge LLM findings with heuristic
+    const mergedRationale: EntityRationale = {
+      decisions: heuristic.rationale.decisions,
+      constraints: [
+        ...heuristic.rationale.constraints,
+        ...parsed.constraints.map(c => ({
+          ...c,
+          source: `LLM-inferred: ${c.source}`,
+        })),
+      ],
+      tradeoffs: deduplicateTradeoffs([
+        ...heuristic.rationale.tradeoffs,
+        ...parsed.tradeoffs,
+      ]),
+      alternatives: deduplicateAlternatives([
+        ...heuristic.rationale.alternatives,
+        ...parsed.alternatives,
+      ]),
+      assumptions: deduplicateAssumptions([
+        ...heuristic.rationale.assumptions,
+        ...parsed.assumptions,
+      ]),
+      risks: [...heuristic.rationale.risks, ...parsed.risks],
+    };
+
+    // Generate argument edges from merged rationale
+    // Combine heuristic edges with edges from LLM-enhanced rationale
+    const heuristicEdges = heuristic.argumentEdges ?? [];
+    const llmEdges = generateArgumentEdges(mergedRationale, {
+      entityIdPrefix: input.entityName || 'rationale-llm',
+      filePath: input.filePath,
+    });
+
+    // Deduplicate edges by ID
+    const edgeMap = new Map<string, ArgumentEdge>();
+    for (const edge of [...heuristicEdges, ...llmEdges]) {
+      if (!edgeMap.has(edge.id)) {
+        edgeMap.set(edge.id, edge);
+      }
+    }
+    const argumentEdges = Array.from(edgeMap.values());
+
     return {
-      rationale: {
-        decisions: heuristic.rationale.decisions,
-        constraints: [
-          ...heuristic.rationale.constraints,
-          ...parsed.constraints.map(c => ({
-            ...c,
-            source: `LLM-inferred: ${c.source}`,
-          })),
-        ],
-        tradeoffs: deduplicateTradeoffs([
-          ...heuristic.rationale.tradeoffs,
-          ...parsed.tradeoffs,
-        ]),
-        alternatives: deduplicateAlternatives([
-          ...heuristic.rationale.alternatives,
-          ...parsed.alternatives,
-        ]),
-        assumptions: deduplicateAssumptions([
-          ...heuristic.rationale.assumptions,
-          ...parsed.assumptions,
-        ]),
-        risks: [...heuristic.rationale.risks, ...parsed.risks],
-      },
+      rationale: mergedRationale,
       confidence: Math.min(heuristic.confidence + 0.2, 0.95),
       llmEvidence,
+      argumentEdges: argumentEdges.length > 0 ? argumentEdges : undefined,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

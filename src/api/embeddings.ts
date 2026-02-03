@@ -22,19 +22,197 @@ import {
   generateRealEmbeddings,
   REAL_EMBEDDING_DIMENSION,
   cosineSimilarity,
+  EMBEDDING_MODELS,
+  setEmbeddingModel,
+  getCurrentModel,
+  type EmbeddingModelId,
 } from './embedding_providers/real_embeddings.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { emptyArray } from './empty_values.js';
 import { createEmptyRedactionCounts, mergeRedactionCounts, redactText, type RedactionCounts } from './redaction.js';
 import { configurable, resolveQuantifiedValue } from '../epistemics/quantification.js';
 
-export type EmbeddingKind = 'code' | 'query';
+export type EmbeddingKind = 'code' | 'query' | 'document';
 export type EmbeddingProvider = 'xenova' | 'sentence-transformers';
+
+// ============================================================================
+// EMBEDDING MODEL CONFIGURATION
+// ============================================================================
+
+/**
+ * Embedding model configuration.
+ *
+ * Supports multiple providers and models with environment variable overrides:
+ * - LIBRARIAN_EMBEDDING_MODEL: Model identifier (e.g., 'all-MiniLM-L6-v2')
+ * - LIBRARIAN_EMBEDDING_PROVIDER: Provider preference ('xenova' | 'sentence-transformers')
+ */
+export interface EmbeddingConfig {
+  /** Model identifier (e.g., 'all-MiniLM-L6-v2', 'jina-embeddings-v2-base-en') */
+  model: string;
+  /** Embedding vector dimensions */
+  dimensions: number;
+  /** Provider to use */
+  provider: EmbeddingProvider;
+  /** Maximum context window in tokens */
+  contextWindow: number;
+  /** Batch size for processing multiple texts */
+  batchSize: number;
+  /** Human-readable description */
+  description: string;
+}
+
+/**
+ * Available embedding model configurations.
+ *
+ * Each model is identified by a key in the format 'provider:model-name' or just 'model-name'.
+ */
+export const DEFAULT_EMBEDDING_CONFIGS: Record<string, EmbeddingConfig> = {
+  // Xenova models (pure JS, offline)
+  'xenova:all-MiniLM-L6-v2': {
+    model: 'all-MiniLM-L6-v2',
+    dimensions: 384,
+    provider: 'xenova',
+    contextWindow: 256,
+    batchSize: 32,
+    description: 'Fast, small model - validated for code similarity (AUC 1.0)',
+  },
+  'xenova:jina-embeddings-v2-base-en': {
+    model: 'jina-embeddings-v2-base-en',
+    dimensions: 768,
+    provider: 'xenova',
+    contextWindow: 8192,
+    batchSize: 16,
+    description: 'Large context (8K tokens) - good for full files',
+  },
+  'xenova:bge-small-en-v1.5': {
+    model: 'bge-small-en-v1.5',
+    dimensions: 384,
+    provider: 'xenova',
+    contextWindow: 512,
+    batchSize: 32,
+    description: 'BGE small - efficient and effective',
+  },
+  // Shorthand aliases (default to xenova provider)
+  'all-MiniLM-L6-v2': {
+    model: 'all-MiniLM-L6-v2',
+    dimensions: 384,
+    provider: 'xenova',
+    contextWindow: 256,
+    batchSize: 32,
+    description: 'Fast, small model - validated for code similarity (AUC 1.0)',
+  },
+  'jina-embeddings-v2-base-en': {
+    model: 'jina-embeddings-v2-base-en',
+    dimensions: 768,
+    provider: 'xenova',
+    contextWindow: 8192,
+    batchSize: 16,
+    description: 'Large context (8K tokens) - good for full files',
+  },
+  'bge-small-en-v1.5': {
+    model: 'bge-small-en-v1.5',
+    dimensions: 384,
+    provider: 'xenova',
+    contextWindow: 512,
+    batchSize: 32,
+    description: 'BGE small - efficient and effective',
+  },
+};
+
+/**
+ * Get embedding configuration from model identifier.
+ *
+ * Resolution order:
+ * 1. If modelId provided, use it directly
+ * 2. Check LIBRARIAN_EMBEDDING_MODEL environment variable
+ * 3. Fall back to 'all-MiniLM-L6-v2' (default)
+ *
+ * @param modelId - Optional model identifier
+ * @returns Embedding configuration for the model
+ * @throws Error if model is not found
+ *
+ * @example
+ * ```typescript
+ * // Use default model
+ * const config = getEmbeddingConfig();
+ *
+ * // Use specific model
+ * const config = getEmbeddingConfig('jina-embeddings-v2-base-en');
+ *
+ * // Use environment variable
+ * process.env.LIBRARIAN_EMBEDDING_MODEL = 'xenova:bge-small-en-v1.5';
+ * const config = getEmbeddingConfig(); // Uses bge-small-en-v1.5
+ * ```
+ */
+export function getEmbeddingConfig(modelId?: string): EmbeddingConfig {
+  const id = modelId
+    || process.env.LIBRARIAN_EMBEDDING_MODEL
+    || 'all-MiniLM-L6-v2';
+
+  const config = DEFAULT_EMBEDDING_CONFIGS[id];
+
+  if (!config) {
+    const availableModels = Object.keys(DEFAULT_EMBEDDING_CONFIGS)
+      .filter(k => !k.includes(':')) // Show only short names
+      .join(', ');
+    throw new Error(
+      `Unknown embedding model: ${id}. Available models: ${availableModels}`
+    );
+  }
+
+  // Apply provider override from environment if set
+  const providerOverride = process.env.LIBRARIAN_EMBEDDING_PROVIDER;
+  if (providerOverride === 'xenova' || providerOverride === 'sentence-transformers') {
+    return { ...config, provider: providerOverride };
+  }
+
+  return config;
+}
+
+/**
+ * List all available embedding models.
+ *
+ * @returns Array of model configurations with their identifiers
+ */
+export function listEmbeddingModels(): Array<{ id: string; config: EmbeddingConfig }> {
+  const seen = new Set<string>();
+  const result: Array<{ id: string; config: EmbeddingConfig }> = [];
+
+  for (const [id, config] of Object.entries(DEFAULT_EMBEDDING_CONFIGS)) {
+    // Only include short names (without provider prefix) to avoid duplicates
+    if (!id.includes(':') && !seen.has(config.model)) {
+      seen.add(config.model);
+      result.push({ id, config });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Configure the embedding service with a specific model.
+ *
+ * This updates the global embedding model used by the EmbeddingService.
+ *
+ * @param modelId - Model identifier to use
+ * @throws Error if model is not found
+ */
+export function configureEmbeddingModel(modelId?: string): EmbeddingConfig {
+  const config = getEmbeddingConfig(modelId);
+
+  // Update the underlying real_embeddings module
+  if (config.model in EMBEDDING_MODELS) {
+    setEmbeddingModel(config.model as EmbeddingModelId);
+  }
+
+  return config;
+}
 
 export interface EmbeddingRequest {
   text: string;
   kind: EmbeddingKind;
   hint?: string;
+  id?: string;  // Optional entity ID for tracking
 }
 
 export interface EmbeddingMetadata {

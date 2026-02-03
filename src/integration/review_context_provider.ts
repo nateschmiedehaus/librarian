@@ -13,6 +13,8 @@
 
 import type { LibrarianStorage } from '../storage/types.js';
 import type { FileKnowledge, GraphEdge } from '../types.js';
+import { logWarning } from '../telemetry/logger.js';
+import { getErrorMessage } from '../utils/errors.js';
 
 export interface ReviewFile {
   path: string;
@@ -421,7 +423,10 @@ async function preWarmFilesAsync(storage: LibrarianStorage, files: string[]): Pr
   const batchSize = 10;
   for (let i = 0; i < files.length; i += batchSize) {
     const batch = files.slice(i, i + batchSize);
-    await Promise.all(batch.map(file => storage.getFileByPath(file).catch(() => null)));
+    await Promise.all(batch.map(file => storage.getFileByPath(file).catch((err) => {
+      logWarning('[review_context] Failed to pre-warm file cache', { file, error: getErrorMessage(err) });
+      return null;
+    })));
   }
 }
 

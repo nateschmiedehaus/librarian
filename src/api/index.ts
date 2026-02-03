@@ -98,6 +98,62 @@ export type {
 } from './context_assembly.js';
 export { resolveContextLevel, CONTEXT_LEVELS } from './context_levels.js';
 export type { ContextLevel, ContextLevelDefinition } from './context_levels.js';
+
+// Test file correlation API
+export {
+  classifyTestQuery,
+  correlateTestFiles,
+  findTestFilesByPattern,
+  createTestContextPacks,
+  runTestCorrelationStage,
+  TEST_FILE_PATTERNS,
+} from './test_file_correlation.js';
+export type {
+  TestQueryClassification,
+  TestCorrelationResult,
+  CorrelatedTestFile,
+  TestCorrelationOptions,
+  TestCorrelationStageResult,
+  TestFilePattern,
+} from './test_file_correlation.js';
+
+// Decision support API
+export {
+  isDecisionSupportQuery,
+  classifyDecision,
+  getDecisionSupport,
+  formatDecisionSupport,
+  runDecisionSupportStage,
+  DECISION_SUPPORT_PATTERNS,
+} from './decision_support.js';
+export type {
+  DecisionCategory,
+  DecisionOption,
+  Precedent,
+  DecisionContext,
+  DecisionSupportStageResult,
+} from './decision_support.js';
+
+// Stage calibration API
+export {
+  initStageCalibration,
+  getStageCalibrationTracker,
+  isStageCalibrationEnabled,
+  recordStagePrediction,
+  recordStageOutcome,
+  recordQueryOutcomes,
+  getPendingOutcomeStats,
+  getStageCalibration,
+  getStageCalibrationAlerts,
+  getStagePredictionCounts,
+  clearStalePendingOutcomes,
+  resetStageCalibration,
+} from './stage_calibration.js';
+export type {
+  StagePredictionContext,
+  StagePredictionResult,
+} from './stage_calibration.js';
+
 export {
   createTrajectoryAnalysisReport,
   writeTrajectoryAnalysisReport,
@@ -527,7 +583,52 @@ export {
   createFunctionQuery,
   createFileQuery,
   createRelatedQuery,
+  classifyQueryIntent,
+  applyDocumentBias,
+  applyDefinitionBias,
+  isDefinitionEntity,
 } from './query.js';
+export type { QueryClassification } from './query.js';
+
+// Code review API for automated code review and issue detection
+export {
+  reviewCode,
+  reviewChangeSet,
+  quickReview,
+  isCodeReviewQuery,
+  extractReviewFilePath,
+  formatCodeReviewResult,
+  CODE_REVIEW_PATTERNS,
+} from './code_review.js';
+export type {
+  CodeReviewResult,
+  ReviewIssue,
+  ReviewSuggestion,
+  ReviewCategory,
+  ReviewOptions,
+  ChangeSetReviewResult,
+} from './code_review.js';
+
+// Project understanding API for high-level queries like "what does this codebase do"
+export {
+  isProjectUnderstandingQuery,
+  PROJECT_UNDERSTANDING_PATTERNS,
+  extractProjectSummary,
+  createProjectUnderstandingPack,
+  getProjectUnderstandingPack,
+  handleProjectUnderstandingQuery,
+  // Deep project understanding (comprehensive analysis for agents)
+  generateProjectUnderstanding,
+  generateAgentContextPrompt,
+  createDeepProjectUnderstandingPack,
+} from './project_understanding.js';
+export type {
+  ProjectSummary,
+  ProjectUnderstanding,
+  GenerateProjectUnderstandingOptions,
+  HandleProjectUnderstandingQueryOptions,
+} from './project_understanding.js';
+
 export {
   executeQueryPipeline,
 } from './execution_pipeline.js';
@@ -535,6 +636,55 @@ export type {
   ExecutionPipelineOptions,
   ExecutionPipelineResult,
 } from './execution_pipeline.js';
+
+// Exhaustive dependency query API
+export {
+  parseStructuralQueryIntent,
+  executeDependencyQuery,
+  executeExhaustiveDependencyQuery,
+  shouldUseGraphTraversal,
+  shouldUseExhaustiveMode,
+  mergeGraphResultsWithCandidates,
+} from './dependency_query.js';
+export type {
+  DependencyDirection,
+  StructuralQueryIntent,
+  ResolvedDependency,
+  DependencyQueryResult,
+} from './dependency_query.js';
+
+// Unified query intent classification API
+export {
+  classifyUnifiedQueryIntent,
+  applyRetrievalStrategyAdjustments,
+  shouldUseFallback,
+  getNextFallbackStrategy,
+} from './query_intent.js';
+export type {
+  QueryIntentType,
+  RetrievalStrategy,
+  UnifiedQueryIntent,
+} from './query_intent.js';
+
+// Graph-based exhaustive query API (transitive closure, impact analysis)
+export {
+  queryExhaustiveDependents,
+  findAllImporters,
+  findAllCallers,
+  findAllDependencies,
+  getTransitiveClosure,
+  detectExhaustiveIntent,
+  extractTargetFromIntent,
+  formatExhaustiveResult,
+  toFileList,
+} from './exhaustive_graph_query.js';
+export type {
+  ExhaustiveQueryOptions,
+  ExhaustiveQueryProgress,
+  DependentEntity,
+  DependencyCycle,
+  ExhaustiveQueryResult,
+} from './exhaustive_graph_query.js';
 
 // Bootstrap API
 export {
@@ -717,3 +867,140 @@ export type {
   ReductionAction,
   UncertaintyReductionTemplate,
 } from './uncertainty_reduction_template.js';
+
+// Argument Edge Query Helpers (Task #15)
+export {
+  getArgumentEdgesForEntity,
+  getSupportingEvidence,
+  getContradictions,
+  getDecisionChain,
+  filterEdgesByType,
+  filterSupportEdges,
+  filterConflictEdges,
+  filterDecisionChainEdges,
+  validateQueryEdgeTypes,
+  hasArgumentEdgeFilter,
+  expandGraphWithEdgeFilter,
+  extractEdgeInfoForResponse,
+} from './argument_edges.js';
+export type {
+  ArgumentEdgeFilterOptions,
+  ArgumentEdgeQueryResult,
+  DecisionChainResult,
+  SupportingEvidenceResult,
+  ContradictionResult,
+  QueryEdgeInfo,
+} from './argument_edges.js';
+
+// Task Planning API for Agent Implementation Guidance
+export {
+  planTask,
+  classifyTask,
+  isTaskPlanningQuery,
+  extractTaskFromQuery,
+} from './task_planning.js';
+export type {
+  TaskPlan,
+  TaskStep,
+  TaskType,
+  TaskComplexity,
+  RiskLevel,
+  ChangeType,
+  FilePriority,
+  TestType,
+  ContextFile,
+  FileToModify,
+  TestRequirement,
+  TaskRisk,
+  EstimatedScope,
+} from './task_planning.js';
+
+// Test Suggestion API for Agent Quality Assurance
+export {
+  classifyTestSuggestionQuery,
+  suggestTests,
+  runTestSuggestionStage,
+} from './test_suggestions.js';
+export type {
+  TestSuggestion,
+  TestScenario,
+  MockRequirement,
+  TestSuggestionOptions,
+  TestSuggestionQueryClassification,
+  TestSuggestionStageResult,
+  TestSuggestionStageOptions,
+} from './test_suggestions.js';
+
+// Error Explanation API for Agent Debugging Assistance
+export {
+  explainError,
+  classifyError,
+  findMatchingPattern,
+  extractIdentifiers,
+  generateFixes,
+  inferLikelyCause,
+  findRelatedErrors,
+  findDocumentation,
+  isErrorExplanationQuery,
+  extractErrorFromQuery,
+  runErrorExplanationStage,
+  createErrorExplanationPack,
+  createRelevantCodePacks,
+  formatErrorSummary,
+  ERROR_PATTERNS,
+  ERROR_EXPLANATION_PATTERNS,
+} from './error_explanation.js';
+export type {
+  ErrorExplanation,
+  ErrorType,
+  ErrorContext,
+  ErrorPatternConfig,
+  ErrorExplanationStageResult,
+  ErrorExplanationStageOptions,
+} from './error_explanation.js';
+
+// Performance Analysis API for Agent Performance Optimization
+export {
+  analyzePerformance,
+  analyzePerformanceBatch,
+  summarizePerformanceAnalysis,
+  findNPlusOne,
+  findBlockingIO,
+  findMemoryLeakRisks,
+  findInefficientLoops,
+  findExpensiveOperations,
+  findSyncInAsync,
+  findLargeBundleImports,
+  isPerformanceQuery,
+  extractPerformanceTarget,
+  PERFORMANCE_QUERY_PATTERNS,
+} from './performance_analysis.js';
+export type {
+  PerformanceAnalysis,
+  PerformanceIssue,
+  PerformanceIssueType,
+  PerformanceHotspot,
+  OptimizationSuggestion,
+  PerformanceAnalysisMetadata,
+} from './performance_analysis.js';
+
+// Dependency Management API for Agent Package Analysis
+export {
+  analyzeDependencies as analyzePackageDependencies,
+  summarizeDependencies,
+  briefSummary as briefDependencySummary,
+  getTopDependencies,
+  getLowUsageDependencies,
+  isDependencyManagementQuery,
+  extractDependencyAction,
+  DEPENDENCY_MANAGEMENT_PATTERNS,
+} from './dependency_management.js';
+export type {
+  DependencyAnalysis,
+  DependencyInfo,
+  TransitiveDep,
+  DuplicateDep,
+  OutdatedDep,
+  DependencyIssue,
+  DependencyRecommendation,
+} from './dependency_management.js';

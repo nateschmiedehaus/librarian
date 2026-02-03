@@ -121,13 +121,17 @@ export class RelevanceEngine {
       throw new Error('unverified_by_trace(provider_unavailable): embedding service not configured');
     }
     const embedding = await this.embeddingService.generateEmbedding({ text: query, kind: 'query' });
-    const results = await this.storage.findSimilarByEmbedding(embedding.embedding, {
+    const searchResponse = await this.storage.findSimilarByEmbedding(embedding.embedding, {
       limit: Math.max(1, options.limit ?? 5),
       minSimilarity: 0.35,
       entityTypes: ['function', 'module'],
     });
+    // Log if search was degraded (e.g., empty vector index)
+    if (searchResponse.degraded) {
+      console.warn(`[relevance_engine] Similarity search degraded: ${searchResponse.degradedReason}`);
+    }
     const examples: ExampleMatch[] = [];
-    for (const match of results) {
+    for (const match of searchResponse.results) {
       if (match.entityType === 'function') {
         const fn = await this.storage.getFunction(match.entityId);
         if (!fn) continue;

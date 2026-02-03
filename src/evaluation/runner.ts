@@ -3,10 +3,11 @@
  */
 
 import { readFile, readdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { computeCitationAccuracy, type CitationInput } from './citation_accuracy.js';
 import { computeRetrievalMetrics } from './metrics.js';
 import { computeSynthesisMetrics } from './synthesis_metrics.js';
+import { withTimeout } from '../utils/async.js';
 
 // ============================================================================
 // CORPUS TYPES
@@ -44,6 +45,7 @@ export interface CorrectAnswer {
 export interface GroundTruthQuery {
   queryId: string;
   repoId: string;
+  corpusId?: string;
   intent: string;
   category: GroundTruthCategory;
   difficulty: GroundTruthDifficulty;
@@ -60,6 +62,7 @@ export interface RepoManifest {
   languages: string[];
   fileCount: number;
   annotationLevel: 'full' | 'partial' | 'sparse';
+  corpusId?: string;
   characteristics: {
     documentationDensity: 'high' | 'medium' | 'low';
     testCoverage: 'high' | 'medium' | 'low';
@@ -72,6 +75,12 @@ export interface EvalCorpus {
   version: string;
   repos: RepoManifest[];
   queries: GroundTruthQuery[];
+  sources: EvalCorpusSource[];
+}
+
+export interface EvalCorpusSource {
+  id: string;
+  path: string;
 }
 
 // ============================================================================
@@ -108,6 +117,7 @@ export interface EvalPipeline {
 
 export interface EvalOptions {
   corpusPath: string;
+  corpusPaths?: string[];
   queryFilter?: {
     categories?: GroundTruthCategory[];
     difficulties?: GroundTruthDifficulty[];
@@ -250,18 +260,18 @@ export class EvalRunner {
 
   async evaluate(options: EvalOptions): Promise<EvalReport> {
     const startedAt = this.clock();
-    const corpus = await loadEvalCorpus(options.corpusPath);
+    const corpus = await loadEvalCorpus(options.corpusPath, options.corpusPaths);
     const filteredQueries = filterQueries(corpus.queries, options.queryFilter);
 
     const queryResults = await runWithConcurrency(
       filteredQueries,
       Math.max(1, options.parallel ?? 1),
       async (query) => {
-        const repo = corpus.repos.find((candidate) => candidate.repoId === query.repoId);
+        const repo = resolveRepoForQuery(corpus.repos, query);
         if (!repo) {
           return buildErroredResult(query, `Unknown repoId: ${query.repoId}`);
         }
-        const repoRoot = join(resolve(options.corpusPath), 'repos', repo.repoId);
+        const repoRoot = resolveRepoRoot(corpus, query, repo, options.corpusPath);
         return this.evaluateSingleQuery(query, repo, repoRoot, options);
       }
     );
@@ -376,16 +386,16 @@ export class EvalRunner {
   }
 
   async evaluateQuery(queryId: string, options: EvalOptions): Promise<QueryEvalResult> {
-    const corpus = await loadEvalCorpus(options.corpusPath);
+    const corpus = await loadEvalCorpus(options.corpusPath, options.corpusPaths);
     const query = corpus.queries.find((candidate) => candidate.queryId === queryId);
     if (!query) {
       throw new Error(`Eval query not found: ${queryId}`);
     }
-    const repo = corpus.repos.find((candidate) => candidate.repoId === query.repoId);
+    const repo = resolveRepoForQuery(corpus.repos, query);
     if (!repo) {
       throw new Error(`Eval query repo not found: ${query.repoId}`);
     }
-    const repoRoot = join(resolve(options.corpusPath), 'repos', repo.repoId);
+    const repoRoot = resolveRepoRoot(corpus, query, repo, options.corpusPath);
     return this.evaluateSingleQuery(query, repo, repoRoot, options);
   }
 
@@ -457,37 +467,84 @@ export function createEvalRunner(deps: EvalRunnerDependencies): EvalRunner {
 // CORPUS LOADING
 // ============================================================================
 
-async function loadEvalCorpus(corpusPath: string): Promise<EvalCorpus> {
-  const reposRoot = join(resolve(corpusPath), 'repos');
-  const repoEntries = await readdir(reposRoot, { withFileTypes: true });
+async function loadEvalCorpus(corpusPath: string, corpusPaths?: string[]): Promise<EvalCorpus> {
+  const roots = resolveCorpusRoots(corpusPath, corpusPaths);
 
   const repos: RepoManifest[] = [];
   const queries: GroundTruthQuery[] = [];
+  const sources: EvalCorpusSource[] = [];
   let version = '0.0.0';
 
-  for (const entry of repoEntries) {
-    if (!entry.isDirectory()) continue;
-    const repoRoot = join(reposRoot, entry.name, '.librarian-eval');
-    const manifest = await readJson<RepoManifest>(join(repoRoot, 'manifest.json'));
-    const groundTruth = await readJson<{ version?: string; repoId?: string; queries?: GroundTruthQuery[] }>(
-      join(repoRoot, 'ground-truth.json')
-    );
+  for (const root of roots) {
+    const resolvedRoot = resolve(root);
+    const corpusId = basename(resolvedRoot);
+    sources.push({ id: corpusId, path: resolvedRoot });
 
-    repos.push(manifest);
+    const reposRoot = join(resolvedRoot, 'repos');
+    const repoEntries = await readdir(reposRoot, { withFileTypes: true });
 
-    if (groundTruth.version) {
-      version = groundTruth.version;
-    }
+    for (const entry of repoEntries) {
+      if (!entry.isDirectory()) continue;
+      const repoRoot = join(reposRoot, entry.name, '.librarian-eval');
+      const manifest = await readJson<RepoManifest>(join(repoRoot, 'manifest.json'));
+      const groundTruth = await readJson<{ version?: string; repoId?: string; queries?: GroundTruthQuery[] }>(
+        join(repoRoot, 'ground-truth.json')
+      );
 
-    for (const query of groundTruth.queries ?? []) {
-      queries.push({
-        ...query,
-        repoId: query.repoId || manifest.repoId,
-      });
+      repos.push({ ...manifest, corpusId });
+
+      if (groundTruth.version) {
+        version = groundTruth.version;
+      }
+
+      for (const query of groundTruth.queries ?? []) {
+        queries.push({
+          ...query,
+          repoId: query.repoId || manifest.repoId,
+          corpusId: query.corpusId ?? corpusId,
+        });
+      }
     }
   }
 
-  return { version, repos, queries };
+  return { version, repos, queries, sources };
+}
+
+function resolveCorpusRoots(primary: string, extra?: string[]): string[] {
+  const combined = [primary, ...(extra ?? [])].filter(Boolean);
+  const seen = new Set<string>();
+  const roots: string[] = [];
+  for (const item of combined) {
+    const resolved = resolve(item);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    roots.push(item);
+  }
+  return roots;
+}
+
+function resolveRepoForQuery(
+  repos: RepoManifest[],
+  query: GroundTruthQuery
+): RepoManifest | undefined {
+  if (query.corpusId) {
+    return repos.find(
+      (candidate) => candidate.repoId === query.repoId && candidate.corpusId === query.corpusId
+    );
+  }
+  return repos.find((candidate) => candidate.repoId === query.repoId);
+}
+
+function resolveRepoRoot(
+  corpus: EvalCorpus,
+  query: GroundTruthQuery,
+  repo: RepoManifest,
+  fallbackCorpusPath: string
+): string {
+  const corpusId = query.corpusId ?? repo.corpusId;
+  const source = corpus.sources.find((candidate) => candidate.id === corpusId);
+  const corpusPath = source?.path ?? fallbackCorpusPath;
+  return join(resolve(corpusPath), 'repos', repo.repoId);
 }
 
 async function readJson<T>(filePath: string): Promise<T> {
@@ -776,23 +833,6 @@ async function runWithConcurrency<T, U>(
 
   await Promise.all(workers);
   return results;
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs?: number): Promise<T> {
-  if (!timeoutMs || timeoutMs <= 0) return promise;
-
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<T>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Eval query timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
 }
 
 function mean(values: number[]): number {

@@ -22,6 +22,7 @@ import type {
 } from './types.js';
 import { DEFAULT_FEDERATION_CONFIG } from './types.js';
 import type { FederationRegistry } from './registry.js';
+import { withTimeout } from '../utils/async.js';
 
 // ============================================================================
 // TYPES
@@ -331,28 +332,6 @@ export class FederatedQueryExecutor<T> {
 // ============================================================================
 // HELPERS
 // ============================================================================
-
-/**
- * Execute a promise with timeout.
- */
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: NodeJS.Timeout;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Query timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-
-  try {
-    const result = await Promise.race([promise, timeoutPromise]);
-    clearTimeout(timeoutId!);
-    return result;
-  } catch (error) {
-    clearTimeout(timeoutId!);
-    throw error;
-  }
-}
 
 /**
  * Split array into chunks.

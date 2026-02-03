@@ -66,9 +66,18 @@ export interface Citation {
   line?: number;
 }
 
+/**
+ * Standard synthesis failure reasons:
+ * - 'No relevant knowledge found for query' - No packs available to synthesize from
+ * - 'NOT_FOUND_LOW_CONFIDENCE' - Results found but confidence below threshold
+ *   (query.ts returns this when top pack confidence < MIN_RESULT_CONFIDENCE_THRESHOLD)
+ * - 'LLM synthesis failed: <details>' - LLM provider error during synthesis
+ */
 export interface SynthesisFailure {
   synthesized: false;
+  /** Reason for synthesis failure. Use standard reasons above for consistency. */
   reason: string;
+  /** Actionable hints for the user/agent to improve results */
   fallbackHints: string[];
 }
 
@@ -95,14 +104,19 @@ export async function synthesizeQueryAnswer(
   const llmConfig = await resolveLibrarianModelConfigWithDiscovery();
 
   // No packs = no knowledge to synthesize from
+  // This can happen when:
+  // 1. No semantic matches found in the index
+  // 2. All results filtered out by confidence threshold (NOT_FOUND_LOW_CONFIDENCE)
+  // 3. Query doesn't match any indexed entities
   if (!packs.length) {
     return {
       synthesized: false,
       reason: 'No relevant knowledge found for query',
       fallbackHints: [
-        'Try a more specific query',
-        'Ensure the codebase has been indexed',
-        'Check if the topic exists in the codebase',
+        'Try a more specific query with different terminology',
+        'Ensure the codebase has been indexed (run bootstrap)',
+        'Check if the topic exists in the indexed files',
+        'The query may be too broad or use unfamiliar terminology',
       ],
     };
   }
@@ -379,7 +393,9 @@ function parseSynthesisResponse(
 }
 
 function parsePossiblyLooseJson(input: string): { answer?: string; keyInsights?: string[]; citations?: Array<{ packId?: string; content?: string; relevance?: number }>; uncertainties?: string[]; confidence?: number } {
-  try { return JSON.parse(input); } catch {}
+  // Intentional: Try strict JSON first, then fall back to normalized parsing.
+  // Empty catch is deliberate - we want to attempt normalization on any parse error.
+  try { return JSON.parse(input); } catch { /* fall through to normalization */ }
   const normalized = input
     .replace(/,\s*([}\]])/g, '$1')
     .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":');

@@ -1,4 +1,21 @@
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { defineConfig } from 'vitest/config';
+
+// Ensure a stable, writable temp directory for vitest internals.
+const fallbackTmpDir = '/tmp';
+const resolvedTmpDir =
+  process.env.TMPDIR && process.env.TMPDIR.trim().length > 0
+    ? process.env.TMPDIR
+    : fallbackTmpDir;
+process.env.TMPDIR = resolvedTmpDir;
+process.env.TMP = resolvedTmpDir;
+process.env.TEMP = resolvedTmpDir;
+try {
+  mkdirSync(resolvedTmpDir, { recursive: true });
+} catch {
+  // If we cannot create it, let vitest surface the error normally.
+}
 
 /**
  * Vitest Configuration for Librarian
@@ -22,6 +39,8 @@ export default defineConfig(async () => {
     isolate: true,
   };
   let reasoning: string[] = ['Using fallback configuration'];
+  let pressureLevel: string | null = null;
+  let resourceAwareExclude: string[] = [];
 
   try {
     const { getConfiguredTestResources } = await import(
@@ -30,6 +49,7 @@ export default defineConfig(async () => {
     const detected = getConfiguredTestResources();
     poolConfig = detected.vitest;
     reasoning = detected.reasoning;
+    pressureLevel = detected.pressure.level;
   } catch {
     // Module not available, use fallback
   }
@@ -39,6 +59,36 @@ export default defineConfig(async () => {
   if (!isNaN(envWorkers) && envWorkers > 0) {
     poolConfig.maxWorkers = envWorkers;
     reasoning = [`Worker override from env: ${envWorkers}`];
+  }
+
+  // Skip heavy/system tests when resources are critically constrained
+  try {
+    if (pressureLevel === 'critical' || pressureLevel === 'oom_imminent') {
+      const { TEST_CATEGORIES } = await import('./src/test/test-categories.js');
+      resourceAwareExclude = [
+        ...TEST_CATEGORIES.heavy.patterns,
+        ...TEST_CATEGORIES.system.patterns,
+      ];
+      reasoning.push(
+        `Resource pressure (${pressureLevel}): skipping heavy/system tests`
+      );
+
+      if (pressureLevel === 'oom_imminent') {
+        resourceAwareExclude.push(
+          '**/evaluation/**/*.test.ts',
+          '**/analysis/**/*.test.ts',
+          '**/unified_embedding_pipeline.test.ts',
+          '**/multi_vector_verification.test.ts',
+          '**/index_librarian_multi_vector.test.ts',
+          '**/librarian_select_compositions.test.ts'
+        );
+        reasoning.push(
+          'OOM imminent: skipping evaluation/analysis + embedding-intensive tests'
+        );
+      }
+    }
+  } catch {
+    // If categories are unavailable, continue without resource-aware exclusions
   }
 
   // Log configuration (unless quiet mode)
@@ -68,6 +118,10 @@ export default defineConfig(async () => {
             '**/*.live.test.ts',
             'src/__tests__/agentic/**'
           );
+        }
+
+        if (resourceAwareExclude.length > 0) {
+          excluded.push(...resourceAwareExclude);
         }
 
         return excluded;

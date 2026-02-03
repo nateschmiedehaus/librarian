@@ -8,6 +8,8 @@ import { TddEngine } from './tdd_engine.js';
 import { LibrarianAgentImpl, type LibrarianAgent } from './agent_interface.js';
 import { createThresholdAlertEvent, globalEventBus, type LibrarianEvent, type LibrarianEventHandler, type LibrarianEventBus } from '../events.js';
 import { recordMultiSignalFeedback } from '../query/scoring.js';
+import { logWarning } from '../telemetry/logger.js';
+import { getErrorMessage } from '../utils/errors.js';
 
 export type { LibrarianAgent } from './agent_interface.js';
 export { TddEngine } from './tdd_engine.js';
@@ -176,7 +178,10 @@ export class LibrarianEngineToolkit {
     if (!packsUsed.length) return;
     const packs: ContextPack[] = [];
     for (const packId of packsUsed) {
-      const pack = await this.storage.getContextPack(packId).catch(() => null);
+      const pack = await this.storage.getContextPack(packId).catch((err) => {
+        logWarning('[engines] Failed to retrieve context pack for feedback', { packId, error: getErrorMessage(err) });
+        return null;
+      });
       if (pack) packs.push(pack);
     }
     if (!packs.length) return;

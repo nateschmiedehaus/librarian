@@ -174,42 +174,14 @@ function createLongMethodRecommendation(k: UniversalKnowledge): RefactoringRecom
     title: `Extract functions from ${k.name}`,
     description: `This function is ${k.quality.complexity.lines} lines. Consider extracting cohesive blocks into separate functions.`,
     rationale: 'Long methods are harder to understand, test, and maintain. Breaking them into smaller, focused functions improves readability and enables better testing.',
-
-    effort: {
-      estimate: hours <= 2 ? 'small' : hours <= 4 ? 'medium' : 'large',
-      hours,
-      confidence: 0.7,
-    },
-
-    impact: {
-      maintainability: 15,
-      testability: 20,
-      readability: 25,
-    },
-
-    risk: {
-      level: callerCount > 5 ? 'high' : callerCount > 2 ? 'medium' : 'low',
-      factors: [
-        'May introduce bugs if extraction boundaries are incorrect',
-        `${callerCount} callers may need review`,
-        'Variable scoping may need adjustment',
-      ],
-      mitigations: [
-        'Write tests for current behavior first',
-        'Use IDE refactoring tools for automated extraction',
-        'Review call sites after extraction',
-        'Use git bisect if issues arise',
-      ],
-    },
-
-    steps: [
-      { order: 1, description: 'Identify cohesive blocks of code (single responsibility)', tool: 'manual' },
-      { order: 2, description: 'Write tests for current behavior', tool: 'vitest', automated: false },
-      { order: 3, description: 'Extract each block as a separate function', tool: 'ts-morph', automated: true },
-      { order: 4, description: 'Run tests to verify behavior preserved', tool: 'vitest', validation: 'All tests pass' },
-      { order: 5, description: 'Update documentation for new functions', tool: 'manual' },
-    ],
-
+    effort: buildEffortEstimate(hours, 0.7),
+    impact: buildImpact(15, 20, 25),
+    risk: buildRisk(
+      getRiskLevelFromCallers(callerCount),
+      buildLongMethodRiskFactors(callerCount),
+      buildLongMethodMitigations()
+    ),
+    steps: buildLongMethodSteps(),
     blocking: [],
     blockedBy: [],
     automatable: true,
@@ -418,6 +390,7 @@ function createSmellRecommendation(
   smell: { name: string; description: string; refactoring?: string }
 ): RefactoringRecommendation {
   const refactoringType = mapSmellToRefactoring(smell.name);
+  const defaultRationale = 'Addressing this code smell improves maintainability and reduces technical debt.';
 
   return {
     id: `smell-${k.id}-${smell.name}-${Date.now()}`,
@@ -425,31 +398,11 @@ function createSmellRecommendation(
     type: refactoringType,
     title: `Fix "${smell.name}" in ${k.name}`,
     description: smell.description,
-    rationale: smell.refactoring ?? `Addressing this code smell improves maintainability and reduces technical debt.`,
-
-    effort: {
-      estimate: 'small',
-      hours: 1,
-      confidence: 0.7,
-    },
-
-    impact: {
-      maintainability: 10,
-      testability: 5,
-      readability: 10,
-    },
-
-    risk: {
-      level: 'low',
-      factors: ['Changes may affect callers'],
-      mitigations: ['Run tests after changes'],
-    },
-
-    steps: [
-      { order: 1, description: `Apply ${refactoringType} refactoring`, tool: 'manual' },
-      { order: 2, description: 'Verify tests pass', tool: 'vitest' },
-    ],
-
+    rationale: smell.refactoring ?? defaultRationale,
+    effort: buildEffortEstimate(1, 0.7),
+    impact: buildImpact(10, 5, 10),
+    risk: buildRisk('low', ['Changes may affect callers'], ['Run tests after changes']),
+    steps: buildSmellSteps(refactoringType),
     blocking: [],
     blockedBy: [],
     automatable: false,
@@ -554,6 +507,88 @@ function toEntityReference(k: UniversalKnowledge): EntityReference {
     name: k.name,
     file: k.location.file,
   };
+}
+
+// Helper to build effort estimate from hours
+function buildEffortEstimate(
+  hours: number,
+  confidence: number
+): RefactoringRecommendation['effort'] {
+  const estimate: EffortEstimate =
+    hours <= 1 ? 'trivial' :
+    hours <= 2 ? 'small' :
+    hours <= 4 ? 'medium' :
+    hours <= 8 ? 'large' : 'epic';
+  return { estimate, hours, confidence };
+}
+
+// Helper to build impact metrics
+function buildImpact(
+  maintainability: number,
+  testability: number,
+  readability: number,
+  performance?: number
+): RefactoringRecommendation['impact'] {
+  return { maintainability, testability, readability, ...(performance !== undefined && { performance }) };
+}
+
+// Helper to build risk assessment
+function buildRisk(
+  level: RiskLevel,
+  factors: string[],
+  mitigations: string[]
+): RefactoringRecommendation['risk'] {
+  return { level, factors, mitigations };
+}
+
+// Helper to build refactoring steps
+function buildSteps(
+  ...steps: Array<{ description: string; tool?: string; automated?: boolean; validation?: string }>
+): RefactoringStep[] {
+  return steps.map((step, index) => ({ order: index + 1, ...step }));
+}
+
+// Helper to determine risk level from caller count
+function getRiskLevelFromCallers(callerCount: number): RiskLevel {
+  return callerCount > 5 ? 'high' : callerCount > 2 ? 'medium' : 'low';
+}
+
+// Helper to build long method risk factors
+function buildLongMethodRiskFactors(callerCount: number): string[] {
+  return [
+    'May introduce bugs if extraction boundaries are incorrect',
+    `${callerCount} callers may need review`,
+    'Variable scoping may need adjustment',
+  ];
+}
+
+// Helper to build long method risk mitigations
+function buildLongMethodMitigations(): string[] {
+  return [
+    'Write tests for current behavior first',
+    'Use IDE refactoring tools for automated extraction',
+    'Review call sites after extraction',
+    'Use git bisect if issues arise',
+  ];
+}
+
+// Helper to build long method refactoring steps
+function buildLongMethodSteps(): RefactoringStep[] {
+  return buildSteps(
+    { description: 'Identify cohesive blocks of code (single responsibility)', tool: 'manual' },
+    { description: 'Write tests for current behavior', tool: 'vitest', automated: false },
+    { description: 'Extract each block as a separate function', tool: 'ts-morph', automated: true },
+    { description: 'Run tests to verify behavior preserved', tool: 'vitest', validation: 'All tests pass' },
+    { description: 'Update documentation for new functions', tool: 'manual' },
+  );
+}
+
+// Helper to build smell refactoring steps
+function buildSmellSteps(refactoringType: RefactoringType): RefactoringStep[] {
+  return buildSteps(
+    { description: `Apply ${refactoringType} refactoring`, tool: 'manual' },
+    { description: 'Verify tests pass', tool: 'vitest' },
+  );
 }
 
 function mapSmellToRefactoring(smellName: string): RefactoringType {

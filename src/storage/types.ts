@@ -80,6 +80,7 @@ export interface LibrarianStorage {
   getFunction(id: string): Promise<FunctionKnowledge | null>;
   getFunctionByPath(filePath: string, name: string): Promise<FunctionKnowledge | null>;
   getFunctionsByPath(filePath: string): Promise<FunctionKnowledge[]>;
+  getFunctionsByName(name: string): Promise<FunctionKnowledge[]>;
   upsertFunction(fn: FunctionKnowledge): Promise<void>;
   upsertFunctions(fns: FunctionKnowledge[]): Promise<void>;
   deleteFunction(id: string): Promise<void>;
@@ -132,10 +133,41 @@ export interface LibrarianStorage {
   findSimilarByEmbedding(
     embedding: Float32Array,
     options: SimilaritySearchOptions
-  ): Promise<SimilarityResult[]>;
+  ): Promise<SimilaritySearchResponse>;
   getMultiVector(entityId: string, entityType?: 'function' | 'module'): Promise<MultiVectorRecord | null>;
   getMultiVectors(options?: MultiVectorQueryOptions): Promise<MultiVectorRecord[]>;
   upsertMultiVector(record: MultiVectorRecord): Promise<void>;
+
+  /**
+   * Clear embeddings that don't match the expected dimension.
+   * Used for auto-recovery when embedding model changes.
+   * @param expectedDimension - The expected embedding dimension (e.g., 384 for sentence-transformers)
+   * @returns Number of embeddings deleted
+   */
+  clearMismatchedEmbeddings(expectedDimension: number): Promise<number>;
+
+  /**
+   * Get embedding statistics for diagnostics.
+   * @returns Counts of embeddings by dimension
+   */
+  getEmbeddingStats(): Promise<{ dimension: number; count: number }[]>;
+
+  // Dependency invalidation (for cascading file change propagation)
+  /**
+   * Invalidate cached query results for a file.
+   * Called when a file's dependencies change.
+   */
+  invalidateCache(filePath: string): Promise<number>;
+  /**
+   * Invalidate embeddings for entities in a file.
+   * Called when a file's content or dependencies change.
+   */
+  invalidateEmbeddings(filePath: string): Promise<number>;
+  /**
+   * Get files that import the given file (reverse dependencies).
+   * Used for cascading invalidation.
+   */
+  getReverseDependencies(filePath: string): Promise<string[]>;
 
   // Query cache (persistent) - REQUIRED for all storage backends
   getQueryCacheEntry(queryHash: string): Promise<QueryCacheEntry | null>;
@@ -405,7 +437,7 @@ export type ChecksumStorage = Pick<
 
 export type EmbeddingStorage = Pick<
   LibrarianStorage,
-  'getEmbedding' | 'setEmbedding' | 'findSimilarByEmbedding' | 'getMultiVector' | 'getMultiVectors' | 'upsertMultiVector'
+  'getEmbedding' | 'setEmbedding' | 'findSimilarByEmbedding' | 'getMultiVector' | 'getMultiVectors' | 'upsertMultiVector' | 'clearMismatchedEmbeddings' | 'getEmbeddingStats'
 >;
 
 export type QueryCacheStorage = Pick<
@@ -625,16 +657,45 @@ export interface ContextPackQueryOptions extends QueryOptions {
   relatedFile?: string;
 }
 
+/**
+ * Entity types that can be embedded and searched semantically.
+ * - function: Code functions with extracted purpose/behavior
+ * - module: Code modules with aggregated understanding
+ * - document: Documentation files (AGENTS.md, README.md, docs/*.md)
+ */
+export type EmbeddableEntityType = 'function' | 'module' | 'document';
+
 export interface SimilaritySearchOptions {
   limit: number;
   minSimilarity: number;
-  entityTypes?: ('function' | 'module')[];
+  entityTypes?: EmbeddableEntityType[];
+  /**
+   * If true, automatically clear mismatched embeddings and return degraded results
+   * instead of throwing an error when all embeddings have wrong dimensions.
+   * The cleared embeddings will be regenerated on next indexing.
+   */
+  autoRecoverDimensionMismatch?: boolean;
 }
 
 export interface SimilarityResult {
   entityId: string;
-  entityType: 'function' | 'module';
+  entityType: EmbeddableEntityType;
   similarity: number;
+}
+
+/**
+ * Response type for similarity search operations.
+ * Includes a degraded flag to indicate when results may be incomplete
+ * due to infrastructure issues (empty vector index, dimension mismatch, etc.)
+ */
+export interface SimilaritySearchResponse {
+  results: SimilarityResult[];
+  /** Whether the search was performed in a degraded state */
+  degraded: boolean;
+  /** Reason for degradation if degraded is true */
+  degradedReason?: 'vector_index_empty' | 'vector_index_null' | 'dimension_mismatch' | 'fallback_to_brute_force' | 'auto_recovered_dimension_mismatch';
+  /** Number of mismatched embeddings that were cleared during auto-recovery */
+  clearedMismatchedCount?: number;
 }
 
 export interface GraphEdgeQueryOptions {
@@ -651,7 +712,7 @@ export interface EmbeddingMetadata {
   modelId: string;
   generatedAt?: string;
   tokenCount?: number;
-  entityType?: 'function' | 'module';
+  entityType?: EmbeddableEntityType;
 }
 
 export interface MultiVectorPayload {
@@ -1506,6 +1567,322 @@ export interface KnowledgeEdgeQueryOptions {
   limit?: number;
   orderBy?: 'weight' | 'confidence' | 'computed_at';
   orderDirection?: 'asc' | 'desc';
+}
+
+// ============================================================================
+// ARGUMENT EDGES (Toulmin-IBIS Research)
+// Based on: docs/research/ARGUMENTATION-STRUCTURES-FOR-CODE-REASONING.md
+// ============================================================================
+
+/**
+ * Argument edge types for representing reasoning chains in codebases.
+ *
+ * These edge types enable capturing the *rationale* behind code connections,
+ * architectural decisions, and design choices.
+ *
+ * Taxonomy based on three formal argumentation frameworks:
+ * - Toulmin Model: claim-warrant-backing structure
+ * - AAF/ASPIC+: attack/support semantics with defeasible reasoning
+ * - IBIS: issue-position-argument deliberation
+ */
+export type ArgumentEdgeType =
+  // Toulmin-inspired (reasoning structure)
+  | 'supports'            // Evidence/grounds for a claim
+  | 'warrants'            // Reasoning principle justifying inference
+  | 'qualifies'           // Limits scope/confidence
+
+  // AAF/ASPIC+-inspired (conflict resolution)
+  | 'contradicts'         // Mutual exclusion
+  | 'undermines'          // Attacks a premise
+  | 'rebuts'              // Provides defeating condition
+
+  // ADR/IBIS-inspired (decision chains)
+  | 'supersedes'          // Replaces previous decision
+  | 'depends_on_decision'; // Requires another decision
+
+/**
+ * Extended entity types for argument graph nodes.
+ * These represent the conceptual entities in architectural reasoning.
+ */
+export type ArgumentEntityType =
+  | 'decision'      // ADR or architectural decision
+  | 'constraint'    // Technical/business constraint
+  | 'assumption'    // Validated or unvalidated assumption
+  | 'alternative'   // Considered but rejected approach
+  | 'tradeoff'      // Gained/sacrificed pair
+  | 'risk'          // Accepted risk
+  | 'evidence'      // Supporting evidence
+  | 'principle';    // Design principle or pattern
+
+/**
+ * Metadata specific to argument edges.
+ * Captures Toulmin components, ASPIC+ rule types, and evidence linkage.
+ */
+export interface ArgumentEdgeMetadata {
+  // Toulmin components
+  /** For 'warrants': source/authority of the reasoning principle */
+  warrantSource?: string;
+  /** For 'qualifies': condition under which the qualification applies */
+  qualifierCondition?: string;
+  /** For 'rebuts': condition that triggers the rebuttal */
+  rebuttalCondition?: string;
+
+  // ASPIC+ components
+  /** Whether the rule is strict (deductive) or defeasible (presumptive) */
+  ruleType?: 'strict' | 'defeasible';
+  /** 0-1 priority level in conflict resolution */
+  preferenceLevel?: number;
+
+  // Relationship metadata
+  /** 0-1 confidence in the relationship */
+  strength?: number;
+  /** Links to evidence entries */
+  evidenceRefs?: string[];
+
+  // Temporal validity
+  /** ISO timestamp when this argument became valid */
+  validFrom?: string;
+  /** ISO timestamp when this argument expires/was superseded */
+  validUntil?: string;
+
+  // Provenance
+  /** Source of this argument edge */
+  extractedFrom?: 'adr' | 'comment' | 'commit' | 'llm_inference' | 'manual';
+
+  // Additional context
+  /** Reason for contradiction or rejection (for 'contradicts' edges) */
+  reason?: string;
+  /** Reason for supersession (for 'supersedes' edges) */
+  supersessionReason?: string;
+  /** Mitigation strategy (for 'rebuts' edges from risks) */
+  mitigation?: string;
+  /** File path where this relationship was detected */
+  filePath?: string;
+}
+
+/**
+ * An argument edge in the knowledge graph.
+ *
+ * Extends KnowledgeGraphEdge with argument-specific semantics and metadata.
+ * Used to represent reasoning chains, decision rationale, and architectural
+ * justifications.
+ *
+ * @example
+ * ```typescript
+ * // Evidence supports a decision
+ * const edge: ArgumentEdge = {
+ *   id: 'arg-001',
+ *   sourceId: 'benchmark-2024',
+ *   targetId: 'adr-015-redis-cache',
+ *   sourceType: 'evidence',
+ *   targetType: 'decision',
+ *   type: 'supports',
+ *   weight: 0.9,
+ *   confidence: 0.95,
+ *   metadata: {
+ *     strength: 0.9,
+ *     extractedFrom: 'adr'
+ *   },
+ *   computedAt: '2024-01-15T10:00:00Z'
+ * };
+ * ```
+ */
+export interface ArgumentEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  sourceType: ArgumentEntityType | KnowledgeGraphEdge['sourceType'];
+  targetType: ArgumentEntityType | KnowledgeGraphEdge['targetType'];
+  type: ArgumentEdgeType;
+  weight: number;                 // 0-1 strength of the relationship
+  confidence: number;             // 0-1 certainty of the edge
+  metadata?: ArgumentEdgeMetadata;
+  computedAt: string;
+  validUntil?: string;
+}
+
+/**
+ * Query options for argument edges.
+ */
+export interface ArgumentEdgeQueryOptions {
+  sourceId?: string;
+  targetId?: string;
+  sourceType?: ArgumentEdge['sourceType'];
+  targetType?: ArgumentEdge['targetType'];
+  edgeType?: ArgumentEdgeType;
+  ruleType?: 'strict' | 'defeasible';
+  minWeight?: number;
+  minConfidence?: number;
+  minStrength?: number;
+  extractedFrom?: ArgumentEdgeMetadata['extractedFrom'];
+  limit?: number;
+  orderBy?: 'weight' | 'confidence' | 'computed_at';
+  orderDirection?: 'asc' | 'desc';
+}
+
+// ============================================================================
+// ARGUMENT EDGE HELPER FUNCTIONS
+// ============================================================================
+
+/** All valid argument edge types */
+export const ARGUMENT_EDGE_TYPES: readonly ArgumentEdgeType[] = [
+  'supports',
+  'warrants',
+  'qualifies',
+  'contradicts',
+  'undermines',
+  'rebuts',
+  'supersedes',
+  'depends_on_decision',
+] as const;
+
+/** All valid argument entity types */
+export const ARGUMENT_ENTITY_TYPES: readonly ArgumentEntityType[] = [
+  'decision',
+  'constraint',
+  'assumption',
+  'alternative',
+  'tradeoff',
+  'risk',
+  'evidence',
+  'principle',
+] as const;
+
+/**
+ * Type guard to check if an edge type is an ArgumentEdgeType.
+ *
+ * @param edgeType - The edge type to check
+ * @returns true if the edge type is a valid ArgumentEdgeType
+ *
+ * @example
+ * ```typescript
+ * if (isArgumentEdgeType(edge.type)) {
+ *   // edge.type is ArgumentEdgeType
+ * }
+ * ```
+ */
+export function isArgumentEdgeType(edgeType: string): edgeType is ArgumentEdgeType {
+  return (ARGUMENT_EDGE_TYPES as readonly string[]).includes(edgeType);
+}
+
+/**
+ * Type guard to check if an entity type is an ArgumentEntityType.
+ *
+ * @param entityType - The entity type to check
+ * @returns true if the entity type is a valid ArgumentEntityType
+ */
+export function isArgumentEntityType(entityType: string): entityType is ArgumentEntityType {
+  return (ARGUMENT_ENTITY_TYPES as readonly string[]).includes(entityType);
+}
+
+/**
+ * Type guard to check if an edge is an ArgumentEdge.
+ *
+ * Checks that the edge has a valid ArgumentEdgeType.
+ *
+ * @param edge - The edge to check
+ * @returns true if the edge is an ArgumentEdge
+ *
+ * @example
+ * ```typescript
+ * const edges = await storage.getKnowledgeEdges();
+ * const argumentEdges = edges.filter(isArgumentEdge);
+ * ```
+ */
+export function isArgumentEdge(edge: { type?: string; edgeType?: string }): edge is ArgumentEdge {
+  const type = edge.type ?? edge.edgeType;
+  return typeof type === 'string' && isArgumentEdgeType(type);
+}
+
+/**
+ * Filter edges to get only argument edges.
+ *
+ * @param edges - Array of edges to filter
+ * @returns Array of edges that are argument edges
+ *
+ * @example
+ * ```typescript
+ * const allEdges = await storage.getKnowledgeEdges();
+ * const argEdges = getArgumentEdges(allEdges);
+ * ```
+ */
+export function getArgumentEdges<T extends { type?: string; edgeType?: string }>(
+  edges: T[]
+): T[] {
+  return edges.filter((edge): edge is T => {
+    const type = edge.type ?? edge.edgeType;
+    return typeof type === 'string' && isArgumentEdgeType(type);
+  });
+}
+
+/**
+ * Group argument edges by their type.
+ *
+ * @param edges - Array of argument edges
+ * @returns Map of edge type to array of edges
+ */
+export function groupArgumentEdgesByType<T extends ArgumentEdge>(
+  edges: T[]
+): Map<ArgumentEdgeType, T[]> {
+  const grouped = new Map<ArgumentEdgeType, T[]>();
+
+  for (const edge of edges) {
+    const existing = grouped.get(edge.type) ?? [];
+    existing.push(edge);
+    grouped.set(edge.type, existing);
+  }
+
+  return grouped;
+}
+
+/**
+ * Create an ArgumentEdge with defaults.
+ *
+ * @param partial - Partial argument edge data
+ * @returns Complete ArgumentEdge with defaults filled in
+ */
+export function createArgumentEdge(
+  partial: Pick<ArgumentEdge, 'id' | 'sourceId' | 'targetId' | 'type'> &
+    Partial<Omit<ArgumentEdge, 'id' | 'sourceId' | 'targetId' | 'type'>>
+): ArgumentEdge {
+  return {
+    sourceType: 'evidence',
+    targetType: 'decision',
+    weight: 1.0,
+    confidence: 1.0,
+    computedAt: new Date().toISOString(),
+    ...partial,
+  };
+}
+
+/**
+ * Check if an argument edge represents a conflict (attack relationship).
+ *
+ * @param edge - The argument edge to check
+ * @returns true if the edge represents a conflict
+ */
+export function isConflictEdge(edge: ArgumentEdge): boolean {
+  return edge.type === 'contradicts' || edge.type === 'undermines' || edge.type === 'rebuts';
+}
+
+/**
+ * Check if an argument edge represents support.
+ *
+ * @param edge - The argument edge to check
+ * @returns true if the edge represents support
+ */
+export function isSupportEdge(edge: ArgumentEdge): boolean {
+  return edge.type === 'supports' || edge.type === 'warrants';
+}
+
+/**
+ * Check if an argument edge is part of a decision chain.
+ *
+ * @param edge - The argument edge to check
+ * @returns true if the edge is part of a decision chain
+ */
+export function isDecisionChainEdge(edge: ArgumentEdge): boolean {
+  return edge.type === 'supersedes' || edge.type === 'depends_on_decision';
 }
 
 /**

@@ -780,6 +780,71 @@ export function calculateExternalPressure(
   };
 }
 
+/**
+ * Hotspot Factor
+ * Files/functions with high churn AND high complexity.
+ * This is a strong predictor of future bugs and maintenance burden.
+ *
+ * Integration with src/strategic/hotspot.ts:
+ * - Use computeHotspotScore() for entities in affectedFiles
+ * - Requires churn data from temporal_graph.ts
+ * - Requires complexity data from DebtMetrics
+ */
+export function calculateHotspotScore(
+  ctx: PriorityComputeContext
+): FactorResult {
+  const { work } = ctx;
+  const evidence: string[] = [];
+  let score = 30; // Default low (most work doesn't target hotspots)
+
+  // Check for hotspot-related tags
+  const hotspotTags = ['hotspot', 'high-churn', 'complex', 'legacy', 'tech-debt', 'refactor'];
+  const matchedTags = work.tags.filter(t =>
+    hotspotTags.some(ht => t.toLowerCase().includes(ht))
+  );
+
+  if (matchedTags.length > 0) {
+    score += matchedTags.length * 15;
+    evidence.push(`Hotspot-related tags: ${matchedTags.join(', ')}`);
+  }
+
+  // Check if affected files are known hotspots (if hotspot data is available in context)
+  // This would integrate with ctx.hotspotScores if provided
+  const affectedFiles = work.traceability.affectedFiles;
+  if (affectedFiles.length > 0) {
+    // Check for high-change files (heuristic based on file history if available)
+    const hasHighChangeFiles = affectedFiles.some(f =>
+      f.changeType === 'modify' && (
+        f.path.includes('core') ||
+        f.path.includes('api') ||
+        f.path.includes('service')
+      )
+    );
+    if (hasHighChangeFiles) {
+      score += 20;
+      evidence.push('Affects core/api/service files (potential hotspots)');
+    }
+  }
+
+  // Technical debt work inherently targets hotspots
+  if (work.type === 'debt') {
+    score += 25;
+    evidence.push('Technical debt reduction targets problem areas');
+  }
+
+  // Refactoring work often targets hotspots
+  if (work.tags.includes('refactoring') || work.tags.includes('cleanup')) {
+    score += 15;
+    evidence.push('Refactoring work addresses code quality');
+  }
+
+  return {
+    score: Math.min(100, score),
+    evidence,
+    dataQuality: matchedTags.length > 0 ? 'measured' : 'inferred',
+  };
+}
+
 // ============================================================================
 // RANKING AND RECOMMENDATIONS
 // ============================================================================

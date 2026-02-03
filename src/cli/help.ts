@@ -27,6 +27,9 @@ COMMANDS:
     watch               Watch for file changes and auto-reindex
     compose             Compile technique bundles from intent
     index --force <file...>  Incrementally index specific files
+    analyze             Run static analysis (dead code, complexity)
+    config heal         Auto-detect and fix suboptimal configuration
+    doctor              Run health diagnostics to identify issues
     help [command]      Show help for a command
 
 GLOBAL OPTIONS:
@@ -34,6 +37,26 @@ GLOBAL OPTIONS:
     -v, --version       Show version information
     -w, --workspace     Set workspace directory (default: current directory)
     --verbose           Enable verbose output
+    --json              Enable JSON output for errors (for agent consumption)
+
+ERROR HANDLING:
+    When --json flag is present, errors are output as structured ErrorEnvelope:
+    {
+      "error": {
+        "code": "ENOINDEX",           // Machine-readable error code
+        "message": "...",             // Human-readable description
+        "retryable": false,           // Can the agent retry this operation?
+        "recoveryHints": [...],       // Suggested recovery actions
+        "context": { ... }            // Additional error context
+      }
+    }
+
+    Error codes include:
+    - ENOINDEX, ESTALE_INDEX        (storage errors - exit codes 10-19)
+    - EQUERY_TIMEOUT, EQUERY_INVALID (query errors - exit codes 20-29)
+    - EPROVIDER_UNAVAILABLE, etc.   (provider errors - exit codes 30-39)
+    - EBOOTSTRAP_REQUIRED, etc.     (bootstrap errors - exit codes 40-49)
+    - EINVALID_ARGUMENT, etc.       (validation errors - exit codes 50-59)
 
 EXAMPLES:
     librarian status
@@ -80,12 +103,20 @@ OPTIONS:
     --depth <level>     Query depth: L0 (shallow), L1 (default), L2 (deep), L3 (comprehensive)
     --files <paths>     Comma-separated list of affected files
     --no-synthesis      Disable LLM synthesis/method hints (retrieval only)
+    --deterministic     Enable deterministic mode for testing (skips LLM, stable sorting)
     --llm-provider <p>  Override LLM provider for synthesis: claude | codex (default: stored bootstrap setting or env)
     --llm-model <id>    Override LLM model id for synthesis (default: stored bootstrap setting or env)
     --uc <ids>          Comma-separated UC IDs (e.g., UC-041,UC-042)
     --uc-priority <p>   UC priority: low|medium|high
     --uc-evidence <n>   Evidence threshold (0.0-1.0)
     --uc-freshness-days <n>  Max staleness in days
+    --token-budget <n>  Maximum tokens for response (enables intelligent truncation)
+    --token-reserve <n> Reserve tokens for agent response (subtracted from budget)
+    --token-priority <p> Truncation priority: relevance|recency|diversity (default: relevance)
+    --enumerate         Enable enumeration mode for listing queries (returns complete lists)
+    --exhaustive        Enable exhaustive mode for dependency queries (returns all dependents)
+    --transitive        Include transitive dependencies (with --exhaustive)
+    --max-depth <n>     Maximum depth for transitive traversal (default: 10)
     --json              Output results as JSON
 
 DESCRIPTION:
@@ -98,6 +129,33 @@ DESCRIPTION:
     - L2: Deep search including graph analysis and community expansion
     - L3: Comprehensive search including patterns, decisions, and similar tasks
 
+    Token budgeting:
+    Agents have finite context windows. Use --token-budget to limit response size.
+    When truncation is needed, packs are removed by relevance score (highest kept).
+    The response includes metadata about truncation (tokensUsed, truncationStrategy).
+
+    Deterministic mode:
+    For testing and verification, --deterministic produces reproducible results by:
+    - Skipping LLM synthesis (inherently non-deterministic)
+    - Using stable sorting (by ID when relevance scores tie)
+    - Using fixed timestamps and deterministic IDs
+    - Setting latency to 0 for reproducibility
+    The response includes a disclosure: "deterministic_mode: ..."
+
+    Enumeration mode:
+    For listing queries like "list all CLI commands" or "how many test files":
+    - Auto-detected from query intent, or force with --enumerate
+    - Returns COMPLETE lists, not top-k semantic matches
+    - Supports 14+ entity categories: cli_command, test_file, interface, class, etc.
+    - Groups results by directory for readability
+
+    Exhaustive mode:
+    For dependency queries like "what depends on X":
+    - Auto-detected from query intent, or force with --exhaustive
+    - Uses graph traversal instead of semantic search
+    - Returns ALL dependents/dependencies, critical for refactoring
+    - Use --transitive to include indirect dependencies
+
 EXAMPLES:
     librarian query "How does authentication work?"
     librarian query "Find error handling patterns" --depth L2
@@ -105,6 +163,11 @@ EXAMPLES:
     librarian query "What tests cover login?" --files src/auth/login.ts
     librarian query "Assess impact" --uc UC-041,UC-042 --uc-priority high
     librarian query "API endpoint structure" --json
+    librarian query "Quick overview" --token-budget 2000 --token-reserve 500
+    librarian query "Test reproducibility" --deterministic --json
+    librarian query "list all CLI commands" --enumerate
+    librarian query "how many test files" --enumerate --json
+    librarian query "what depends on SqliteStorage" --exhaustive --transitive
 `,
 
   bootstrap: `
@@ -117,7 +180,7 @@ OPTIONS:
     --force             Force full reindex even if data exists
     --force-resume      Resume bootstrap even if workspace fingerprint changed
     --scope <name>      Bootstrap scope: full | librarian (default: full)
-    --mode <name>       Bootstrap mode: fast | full (default: fast)
+    --mode <name>       Bootstrap mode: fast | full (default: full)
     --llm-provider <p>  Force LLM provider: claude | codex (default: auto)
     --llm-model <id>    Force LLM model id (default: daily selection)
 
@@ -482,6 +545,176 @@ EXAMPLES:
     librarian index --force src/new_feature.ts
     librarian index --force src/auth/*.ts --verbose
     librarian index --force file1.ts file2.ts file3.ts
+`,
+
+  analyze: `
+librarian analyze - Run static analysis on the codebase
+
+USAGE:
+    librarian analyze --dead-code [options]
+    librarian analyze --complexity [options]
+
+OPTIONS:
+    --dead-code         Detect dead/unused code
+    --complexity        Report function complexity metrics
+    --format <fmt>      Output format: text | json (default: text)
+    --threshold <n>     Complexity threshold for flagging (default: 10)
+
+DESCRIPTION:
+    Runs static analysis on the codebase without requiring LLM or embeddings.
+
+    Dead Code Analysis (--dead-code):
+    - Detects unreachable code (after return/throw/break/continue)
+    - Finds unused exports (exported but never imported)
+    - Identifies unused variables and parameters
+    - Locates unused private functions
+    - Flags commented-out code blocks
+
+    Complexity Analysis (--complexity):
+    - Reports cyclomatic complexity for all functions
+    - Measures maximum nesting depth
+    - Counts lines and parameters
+    - Flags functions above threshold
+
+    Both analyses output:
+    - File paths (absolute or relative)
+    - Line numbers
+    - Confidence scores (for dead code)
+    - Actionable recommendations
+
+EXAMPLES:
+    librarian analyze --dead-code
+    librarian analyze --dead-code --format json
+    librarian analyze --complexity
+    librarian analyze --complexity --threshold 15
+    librarian analyze --complexity --format json
+`,
+
+  config: `
+librarian config - Configuration management commands
+
+USAGE:
+    librarian config heal [options]
+
+SUBCOMMANDS:
+    heal                Auto-detect and fix suboptimal configuration settings
+
+OPTIONS (for 'heal'):
+    --dry-run           Show what would be healed without making changes
+    --diagnose-only     Only diagnose issues, don't apply fixes
+    --rollback          Rollback to previous configuration state
+    --history           Show configuration effectiveness history
+    --risk-tolerance <level>  Risk tolerance: safe | low | medium (default: low)
+    --format <fmt>      Output format: text | json (default: text)
+    --verbose           Show detailed output
+
+DESCRIPTION:
+    The config heal command automatically detects and fixes suboptimal
+    configuration settings. It includes:
+
+    DRIFT DETECTION:
+    - Detects when codebase has changed enough that config is stale
+    - Identifies structural changes (new directories, files)
+    - Recommends include/exclude pattern updates
+
+    STALENESS CHECKS:
+    - Tracks when knowledge becomes outdated
+    - Monitors component update timestamps
+    - Flags stale embeddings, indices, and knowledge
+
+    AUTO-OPTIMIZATION:
+    - Adjusts config based on usage patterns
+    - Optimizes batch sizes and concurrency
+    - Fixes resource limit issues
+
+    The self-healing system integrates with the homeostasis daemon for
+    continuous autonomous healing when running in daemon mode.
+
+EXAMPLES:
+    librarian config heal                    # Diagnose and fix issues
+    librarian config heal --dry-run          # Preview changes only
+    librarian config heal --diagnose-only    # Diagnosis report only
+    librarian config heal --rollback         # Undo last healing
+    librarian config heal --history          # View effectiveness history
+    librarian config heal --risk-tolerance safe  # Only apply safest fixes
+    librarian config heal --format json      # JSON output for automation
+`,
+
+  doctor: `
+librarian doctor - Run health diagnostics to identify issues
+
+USAGE:
+    librarian doctor [options]
+
+OPTIONS:
+    --verbose           Show detailed diagnostic information
+    --json              Output results as JSON
+
+DESCRIPTION:
+    Runs comprehensive health diagnostics on the Librarian system to identify
+    potential issues and provide actionable suggestions. Checks include:
+
+    DATABASE ACCESS:
+    - Verifies database file exists and is accessible
+    - Checks file permissions and size
+    - Validates metadata and schema
+
+    BOOTSTRAP STATUS:
+    - Checks if bootstrap has been run
+    - Verifies bootstrap completed successfully
+    - Detects if rebootstrapping is needed
+
+    FUNCTIONS/EMBEDDINGS CORRELATION:
+    - Compares function count to embedding count
+    - Reports embedding coverage percentage
+    - Flags missing or incomplete embeddings
+
+    MODULES INDEXED:
+    - Verifies module extraction completed
+    - Reports total modules indexed
+
+    CONTEXT PACKS HEALTH:
+    - Checks pack generation status
+    - Reports pack types and counts
+    - Identifies low-confidence or stale packs
+
+    VECTOR INDEX:
+    - Verifies HNSW index population
+    - Checks for dimension mismatches
+    - Reports multi-vector status
+
+    GRAPH EDGES:
+    - Validates relationship graph
+    - Reports edge types and counts
+    - Flags missing or incomplete graphs
+
+    KNOWLEDGE CONFIDENCE:
+    - Reports average confidence level
+    - Flags low overall confidence
+
+    EMBEDDING PROVIDER:
+    - Verifies embedding model availability
+    - Reports provider status
+
+    LLM PROVIDER:
+    - Checks LLM availability for synthesis
+    - Reports authentication status
+
+OUTPUT:
+    Each check reports one of three statuses:
+    - [OK]     Check passed, component is healthy
+    - [WARN]   Check passed with warnings, may need attention
+    - [ERROR]  Check failed, requires action
+
+    Exit codes:
+    - 0: All checks passed or only warnings
+    - 1: One or more errors detected
+
+EXAMPLES:
+    librarian doctor
+    librarian doctor --verbose
+    librarian doctor --json
+    librarian doctor --verbose --json
 `,
 };
 

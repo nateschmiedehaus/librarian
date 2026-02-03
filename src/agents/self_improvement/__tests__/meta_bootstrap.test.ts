@@ -180,7 +180,7 @@ function createDryRunStorage(): LibrarianStorage & { trackedFiles: Set<string> }
     deleteFileChecksum: vi.fn().mockResolvedValue(undefined),
     getEmbedding: vi.fn().mockResolvedValue(null),
     setEmbedding: vi.fn().mockResolvedValue(undefined),
-    findSimilarByEmbedding: vi.fn().mockResolvedValue([]),
+    findSimilarByEmbedding: vi.fn().mockResolvedValue({ results: [], degraded: false }),
     getMultiVector: vi.fn().mockResolvedValue(null),
     getMultiVectors: vi.fn().mockResolvedValue([]),
     upsertMultiVector: vi.fn().mockResolvedValue(undefined),

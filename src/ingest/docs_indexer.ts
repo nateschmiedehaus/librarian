@@ -9,6 +9,7 @@ import { getErrorMessage } from '../utils/errors.js';
 import { resolveLlmServiceAdapter, type LlmServiceAdapter } from '../adapters/llm_service.js';
 import type { TaxonomyItem } from '../api/taxonomy.js';
 import type { IngestionContext, IngestionItem, IngestionResult, IngestionSource } from './types.js';
+import type { DocumentKnowledge } from '../types.js';
 
 export interface DocHeading { level: number; text: string; line: number; }
 export interface DocLink { text: string; url: string; line: number; }
@@ -34,6 +35,37 @@ export interface DocsIngestionOptions {
 
 const DEFAULT_DOC_GLOBS = ['**/*.md', '**/*.mdx'];
 const DEFAULT_MAX_BYTES = 512_000;
+
+/**
+ * High-relevance document patterns - these get priority in meta-queries.
+ * Pattern: [glob pattern, relevance boost 0-1, intended audience]
+ */
+const META_DOC_PATTERNS: Array<[string, number, DocumentKnowledge['audience']]> = [
+  ['AGENTS.md', 1.0, 'agent'],
+  ['**/AGENTS.md', 1.0, 'agent'],
+  ['CLAUDE.md', 1.0, 'agent'],
+  ['**/CLAUDE.md', 1.0, 'agent'],
+  ['CODEX.md', 1.0, 'agent'],
+  ['**/CODEX.md', 1.0, 'agent'],
+  ['docs/librarian/AGENT_INTEGRATION.md', 1.0, 'agent'],
+  ['**/AGENT_*.md', 0.9, 'agent'],
+  ['README.md', 0.8, 'general'],
+  ['**/README.md', 0.7, 'developer'],
+  ['docs/librarian/*.md', 0.7, 'developer'],
+  ['CONTRIBUTING.md', 0.6, 'developer'],
+  ['**/CONTRIBUTING.md', 0.6, 'developer'],
+  ['docs/**/*.md', 0.5, 'developer'],
+];
+
+/**
+ * Patterns that indicate the document is about how to USE something (meta-queries).
+ */
+const HOW_TO_KEYWORDS = [
+  'how to', 'getting started', 'quick start', 'usage', 'guide',
+  'tutorial', 'walkthrough', 'instructions', 'setup', 'integration',
+  'agent', 'workflow', 'example', 'best practice', 'overview',
+];
+
 const DOC_TAXONOMY: TaxonomyItem[] = [
   'decision_records_linkage',
   'rationale_for_changes',
@@ -287,4 +319,184 @@ export function createDocsIngestionSource(options: DocsIngestionOptions = {}): I
       return { items, errors };
     },
   };
+}
+
+// ============================================================================
+// DOCUMENT KNOWLEDGE GENERATION
+// ============================================================================
+
+/**
+ * Determines if a document path matches meta-doc patterns and returns relevance info.
+ */
+export function classifyDocument(relativePath: string): {
+  isMetaDoc: boolean;
+  relevanceBoost: number;
+  audience: DocumentKnowledge['audience'];
+} {
+  const normalized = relativePath.replace(/\\/g, '/');
+  const fileName = path.basename(normalized);
+
+  for (const [pattern, boost, audience] of META_DOC_PATTERNS) {
+    // Exact match
+    if (pattern === fileName || pattern === normalized) {
+      return { isMetaDoc: true, relevanceBoost: boost, audience };
+    }
+    // Glob-style match (simplified)
+    if (pattern.includes('*')) {
+      const regexPattern = pattern
+        .replace(/\*\*/g, '.*')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\./g, '\\.');
+      if (new RegExp(`^${regexPattern}$`).test(normalized)) {
+        return { isMetaDoc: boost >= 0.7, relevanceBoost: boost, audience };
+      }
+    }
+  }
+
+  return { isMetaDoc: false, relevanceBoost: 0.3, audience: 'general' };
+}
+
+/**
+ * Detects if document content is about "how to use" something.
+ */
+export function detectHowToContent(content: string, headings: DocHeading[]): boolean {
+  const lowerContent = content.toLowerCase();
+  const headingText = headings.map(h => h.text.toLowerCase()).join(' ');
+  const combined = `${headingText} ${lowerContent.slice(0, 3000)}`;
+
+  return HOW_TO_KEYWORDS.some(keyword => combined.includes(keyword));
+}
+
+/**
+ * Extracts the primary title from parsed markdown.
+ */
+function extractTitle(parse: DocParseResult, relativePath: string): string {
+  const h1 = parse.headings.find(h => h.level === 1);
+  if (h1) return h1.text;
+  const h2 = parse.headings.find(h => h.level === 2);
+  if (h2) return h2.text;
+  return path.basename(relativePath, path.extname(relativePath));
+}
+
+/**
+ * Extracts key topics from headings (H2s primarily).
+ */
+function extractKeyTopics(parse: DocParseResult): string[] {
+  return parse.headings
+    .filter(h => h.level === 2 || h.level === 3)
+    .map(h => h.text)
+    .slice(0, 10);
+}
+
+/**
+ * Generates the embedding input text for a document.
+ * Prioritizes title, summary, and how-to keywords for meta-queries.
+ */
+export function generateDocEmbeddingInput(doc: {
+  title: string;
+  summary: string;
+  purpose: string;
+  headings: string[];
+  audience: DocumentKnowledge['audience'];
+  relativePath: string;
+}): string {
+  const parts: string[] = [];
+
+  // Title with boost for agent docs
+  if (doc.audience === 'agent') {
+    parts.push(`[AGENT DOCUMENTATION] ${doc.title}`);
+  } else {
+    parts.push(doc.title);
+  }
+
+  // Purpose statement for meta-query matching
+  if (doc.purpose) {
+    parts.push(`Purpose: ${doc.purpose}`);
+  }
+
+  // Summary for semantic matching
+  parts.push(doc.summary);
+
+  // Key headings for topic coverage
+  if (doc.headings.length > 0) {
+    parts.push(`Topics: ${doc.headings.slice(0, 8).join(', ')}`);
+  }
+
+  // Path context
+  parts.push(`File: ${doc.relativePath}`);
+
+  return parts.join('\n\n');
+}
+
+export interface DocumentKnowledgeResult {
+  document: DocumentKnowledge;
+  embeddingInput: string;
+}
+
+/**
+ * Converts a document ingestion item to DocumentKnowledge with embedding input.
+ */
+export function createDocumentKnowledge(
+  relativePath: string,
+  filePath: string,
+  content: string,
+  parse: DocParseResult,
+  summary: string,
+  llmEvidence?: DocumentKnowledge['llmEvidence']
+): DocumentKnowledgeResult {
+  const classification = classifyDocument(relativePath);
+  const isHowTo = detectHowToContent(content, parse.headings);
+  const title = extractTitle(parse, relativePath);
+  const keyTopics = extractKeyTopics(parse);
+
+  // Infer purpose from title and headings
+  const purpose = isHowTo
+    ? `Explains how to use or integrate with ${title.replace(/^#\s*/, '')}`
+    : `Documentation about ${title.replace(/^#\s*/, '')}`;
+
+  // Calculate final relevance boost
+  const finalBoost = Math.min(
+    1.0,
+    classification.relevanceBoost + (isHowTo ? 0.15 : 0) + (classification.audience === 'agent' ? 0.1 : 0)
+  );
+
+  const document: DocumentKnowledge = {
+    id: `doc:${relativePath}`,
+    path: filePath,
+    relativePath,
+    name: path.basename(relativePath),
+    title,
+    summary,
+    purpose,
+    audience: classification.audience,
+    headings: parse.headings.map(h => h.text),
+    keyTopics,
+    wordCount: parse.wordCount,
+    isMetaDoc: classification.isMetaDoc || isHowTo,
+    relevanceBoost: finalBoost,
+    confidence: 0.8,
+    lastIndexed: new Date().toISOString(),
+    checksum: hashContent(content),
+    llmEvidence,
+  };
+
+  const embeddingInput = generateDocEmbeddingInput({
+    title,
+    summary,
+    purpose,
+    headings: keyTopics,
+    audience: classification.audience,
+    relativePath,
+  });
+
+  return { document, embeddingInput };
+}
+
+/**
+ * Get all high-relevance document patterns for prioritized indexing.
+ */
+export function getHighRelevancePatterns(): string[] {
+  return META_DOC_PATTERNS
+    .filter(([_, boost]) => boost >= 0.7)
+    .map(([pattern]) => pattern);
 }

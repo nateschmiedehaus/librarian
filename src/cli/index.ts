@@ -20,6 +20,9 @@
  *   librarian evolve              - Run evolutionary improvement loop
  *   librarian eval                - Produce FitnessReport.v1
  *   librarian replay              - Replay evolution cycle or variant
+ *   librarian analyze             - Run static analysis (dead code, complexity)
+ *   librarian config heal         - Auto-detect and fix suboptimal config
+ *   librarian doctor              - Run health diagnostics to identify issues
  *
  * @packageDocumentation
  */
@@ -45,9 +48,41 @@ import { indexCommand } from './commands/index.js';
 import { contractCommand } from './commands/contract.js';
 import { diagnoseCommand } from './commands/diagnose.js';
 import { composeCommand } from './commands/compose.js';
-import { CliError, formatError } from './errors.js';
+import { analyzeCommand } from './commands/analyze.js';
+import { configHealCommand } from './commands/config_heal.js';
+import { doctorCommand } from './commands/doctor.js';
+import {
+  CliError,
+  formatError,
+  classifyError,
+  formatErrorWithHints,
+  formatErrorJson,
+  getExitCode,
+  createErrorEnvelope,
+  type ErrorEnvelope,
+} from './errors.js';
 
-type Command = 'status' | 'query' | 'bootstrap' | 'inspect' | 'confidence' | 'validate' | 'check-providers' | 'visualize' | 'coverage' | 'health' | 'heal' | 'evolve' | 'eval' | 'replay' | 'watch' | 'index' | 'contract' | 'diagnose' | 'compose' | 'help';
+type Command = 'status' | 'query' | 'bootstrap' | 'inspect' | 'confidence' | 'validate' | 'check-providers' | 'visualize' | 'coverage' | 'health' | 'heal' | 'evolve' | 'eval' | 'replay' | 'watch' | 'index' | 'contract' | 'diagnose' | 'compose' | 'analyze' | 'config' | 'doctor' | 'help';
+
+/**
+ * Check if --json flag is present in arguments
+ */
+function hasJsonFlag(args: string[]): boolean {
+  return args.includes('--json');
+}
+
+/**
+ * Output a structured error for agent consumption
+ */
+function outputStructuredError(envelope: ErrorEnvelope, useJson: boolean): void {
+  if (useJson) {
+    // JSON mode: output structured error
+    console.error(formatErrorJson(envelope));
+  } else {
+    // Human mode: formatted error with hints
+    console.error(formatErrorWithHints(envelope));
+  }
+}
 
 const COMMANDS: Record<Command, { description: string; usage: string }> = {
   'status': {
@@ -88,7 +123,7 @@ const COMMANDS: Record<Command, { description: string; usage: string }> = {
   },
   'health': {
     description: 'Show current Librarian health status',
-    usage: 'librarian health [--verbose] [--format text|json|prometheus]',
+    usage: 'librarian health [--verbose] [--completeness] [--format text|json|prometheus]',
   },
   'heal': {
     description: 'Run homeostatic healing loop until healthy',
@@ -125,6 +160,18 @@ const COMMANDS: Record<Command, { description: string; usage: string }> = {
   'index': {
     description: 'Incrementally index specific files (no full bootstrap)',
     usage: 'librarian index --force <file...> [--verbose]',
+  },
+  'analyze': {
+    description: 'Run static analysis (dead code, complexity)',
+    usage: 'librarian analyze --dead-code | --complexity [--format text|json]',
+  },
+  'config': {
+    description: 'Configuration management (heal, diagnose)',
+    usage: 'librarian config heal [--dry-run] [--diagnose-only] [--rollback] [--history]',
+  },
+  'doctor': {
+    description: 'Run health diagnostics to identify issues',
+    usage: 'librarian doctor [--verbose] [--json]',
   },
   'help': {
     description: 'Show help information',
@@ -165,10 +212,23 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Check for --json flag early for structured error output
+  const jsonMode = hasJsonFlag(args);
+
   if (!(command in COMMANDS)) {
-    console.error(`Unknown command: ${command}`);
-    console.error(`Run 'librarian help' for usage information.`);
-    process.exitCode = 1;
+    const envelope = createErrorEnvelope(
+      'EINVALID_ARGUMENT',
+      `Unknown command: ${command}`,
+      {
+        recoveryHints: [
+          `Run 'librarian help' for usage information`,
+          `Available commands: ${Object.keys(COMMANDS).join(', ')}`,
+        ],
+        context: { command },
+      },
+    );
+    outputStructuredError(envelope, jsonMode);
+    process.exitCode = getExitCode(envelope);
     return;
   }
 
@@ -213,6 +273,7 @@ async function main(): Promise<void> {
           workspace,
           verbose,
           format: getFormatArg(args) as 'text' | 'json' | 'prometheus',
+          completeness: args.includes('--completeness'),
         });
         break;
       case 'heal':
@@ -286,23 +347,62 @@ async function main(): Promise<void> {
           files: commandArgs.filter(arg => arg !== '--force'),
         });
         break;
+      case 'analyze':
+        await analyzeCommand({
+          workspace,
+          args: commandArgs,
+          rawArgs: args,
+        });
+        break;
+      case 'config':
+        // Sub-command handling for config
+        if (commandArgs[0] === 'heal') {
+          await configHealCommand({
+            workspace,
+            dryRun: args.includes('--dry-run'),
+            verbose,
+            riskTolerance: getStringArg(args, '--risk-tolerance') as 'safe' | 'low' | 'medium' | undefined ?? 'low',
+            format: getFormatArg(args) as 'text' | 'json',
+            diagnoseOnly: args.includes('--diagnose-only'),
+            rollback: args.includes('--rollback'),
+            showHistory: args.includes('--history'),
+          });
+        } else {
+          console.error('Unknown config subcommand. Use: librarian config heal');
+          process.exitCode = 1;
+        }
+        break;
+      case 'doctor':
+        await doctorCommand({
+          workspace,
+          verbose,
+          json: jsonMode,
+        });
+        break;
     }
   } catch (error) {
-    if (error instanceof CliError) {
-      console.error(formatError(error));
-      if (error.suggestion) {
-        console.error(`\nSuggestion: ${error.suggestion}`);
-      }
-    } else {
-      console.error(formatError(error));
+    // Convert error to structured envelope for programmatic handling
+    const envelope = classifyError(error);
+
+    // Add command context to the error
+    if (envelope.context) {
+      envelope.context.command = command;
     }
-    process.exitCode = 1;
+
+    // Output error in appropriate format
+    outputStructuredError(envelope, jsonMode);
+
+    // Set exit code based on error type
+    process.exitCode = getExitCode(envelope);
   }
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  // Fatal errors also get structured output if possible
+  const jsonMode = process.argv.includes('--json');
+  const envelope = classifyError(error);
+  outputStructuredError(envelope, jsonMode);
+  process.exitCode = getExitCode(envelope);
 });
 
 // Helper functions for argument parsing

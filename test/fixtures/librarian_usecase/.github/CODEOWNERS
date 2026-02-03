@@ -1,0 +1,17 @@
+# Code Owners for User Management Service
+
+# Default owners for everything
+* @platform-team
+
+# Auth team owns authentication code
+/src/auth/ @auth-team @security-team
+
+# User service owned by core team
+/src/user/ @core-team
+
+# Infra team owns deployment configs
+/infra/ @infra-team
+/.github/ @infra-team
+
+# Shared utilities - multiple owners
+/src/utils/ @core-team @platform-team

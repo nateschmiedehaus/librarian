@@ -1,12 +1,14 @@
 import path from 'node:path';
 import type { LibrarianStorage } from '../storage/types.js';
-import type { GraphEntityType, LibrarianQuery, ContextPack } from '../types.js';
+import type { GraphEntityType, LibrarianQuery, ContextPack, Perspective } from '../types.js';
 import type { FileKnowledge, FunctionKnowledge, ModuleKnowledge, UniversalKnowledgeRecord } from '../storage/types.js';
 import { EmbeddingService } from '../api/embeddings.js';
 import { safeJsonParse } from '../utils/safe_json.js';
 import { logWarning } from '../telemetry/logger.js';
+import { getErrorMessage } from '../utils/errors.js';
 import {
   multiSignalScorer,
+  DirectoryAffinitySignalComputer,
   type QueryContext,
   type EntityData,
   type ScoredEntity,
@@ -14,6 +16,13 @@ import {
   type FeedbackRecord,
 } from './multi_signal_scorer.js';
 import type { EntityId } from '../core/contracts.js';
+import {
+  inferPerspective,
+  getEntityTypeWeight,
+  calculatePerspectiveBoost,
+  type PerspectiveConfig,
+  getPerspectiveConfig,
+} from '../api/perspective.js';
 
 const MULTI_SIGNAL_STATE_KEY = 'librarian.multi_signal_scorer.v1';
 const DEFAULT_TARGET_TYPES = ['function', 'module'];
@@ -62,22 +71,41 @@ export async function persistMultiSignalState(storage: LibrarianStorage): Promis
 }
 
 export function buildQueryContext(
-  query: Pick<LibrarianQuery, 'intent' | 'affectedFiles' | 'taskType'>,
+  query: Pick<LibrarianQuery, 'intent' | 'affectedFiles' | 'taskType' | 'perspective'>,
   queryEmbedding?: Float32Array | null,
   options: { currentUser?: string; currentTeam?: string } = {}
 ): QueryContext {
   const intent = query.intent ?? '';
   const queryTerms = tokenize(intent);
   const currentFile = query.affectedFiles?.find(Boolean);
+
+  // Determine target entity types based on perspective
+  let targetEntityTypes = DEFAULT_TARGET_TYPES;
+  const perspective = inferPerspective(query);
+  if (perspective) {
+    // Sort entity types by their perspective weights
+    const config = getPerspectiveConfig(perspective);
+    const typesWithWeights = (Object.entries(config.entityTypeWeights) as [string, number][])
+      .sort((a, b) => b[1] - a[1])
+      .map(([type]) => type);
+    targetEntityTypes = typesWithWeights;
+  }
+
+  // Detect target directories from query intent
+  // This enables the directory_affinity signal to boost results from relevant paths
+  // e.g., "CLI command implementation" -> targetDirectories: ['cli', 'commands']
+  const targetDirectories = DirectoryAffinitySignalComputer.detectDirectoryPatterns(intent);
+
   return {
     queryText: intent,
     queryTerms,
     queryEmbedding: queryEmbedding ? Array.from(queryEmbedding) : undefined,
     targetDomains: queryTerms.length ? queryTerms : undefined,
-    targetEntityTypes: DEFAULT_TARGET_TYPES,
+    targetEntityTypes,
     currentFile,
     currentUser: options.currentUser,
     currentTeam: options.currentTeam,
+    targetDirectories: targetDirectories.length > 0 ? targetDirectories : undefined,
   };
 }
 
@@ -94,7 +122,55 @@ export async function scoreCandidatesWithMultiSignals(
     currentUser: resolveCurrentUser(),
   });
   const entityData = await buildEntityData(storage, candidates, workspaceRoot);
+  const entityDataById = new Map(entityData.map(e => [e.id, e]));
   const scored = await multiSignalScorer.scoreEntities(entityData, queryContext);
+
+  // Apply keyword boost for obvious filename/path matches
+  // This ensures queries like "bootstrap" strongly prefer bootstrap.ts
+  for (const entry of scored) {
+    const entity = entityDataById.get(entry.entityId);
+    if (entity) {
+      const keywordBoost = computeKeywordBoost(
+        queryContext.queryTerms,
+        entity.path,
+        entity.name
+      );
+      if (keywordBoost > 1.0) {
+        entry.combinedScore = Math.min(1.0, entry.combinedScore * keywordBoost);
+      }
+    }
+  }
+
+  // Apply perspective-based score adjustments
+  const perspective = inferPerspective(query);
+  if (perspective) {
+    for (const entry of scored) {
+      // Find the candidate to get entity type
+      const candidate = candidates.find(c => c.entityId === entry.entityId);
+      if (candidate) {
+        // Adjust score based on entity type weight for this perspective
+        const entityTypeWeight = getEntityTypeWeight(
+          candidate.entityType as 'function' | 'module' | 'document',
+          perspective
+        );
+
+        // Adjust score based on content relevance to perspective
+        const contentBoost = calculatePerspectiveBoost(
+          entry.explanation || '',
+          perspective
+        );
+
+        // Apply perspective adjustments: entity type weight and content boost
+        // Use a weighted combination to avoid over-boosting
+        const perspectiveMultiplier = 0.7 + (0.3 * entityTypeWeight * contentBoost);
+        entry.combinedScore = Math.min(1.0, entry.combinedScore * perspectiveMultiplier);
+      }
+    }
+  }
+
+  // Re-sort after all score adjustments (keyword boost + perspective)
+  scored.sort((a, b) => b.combinedScore - a.combinedScore);
+
   return new Map(scored.map((entry) => [entry.entityId, entry]));
 }
 
@@ -226,12 +302,18 @@ function buildContent(
 }
 
 async function loadFunctions(storage: LibrarianStorage, ids: string[]): Promise<FunctionKnowledge[]> {
-  const results = await Promise.all(ids.map((id) => storage.getFunction(id).catch(() => null)));
+  const results = await Promise.all(ids.map((id) => storage.getFunction(id).catch((err) => {
+    logWarning('[scoring] getFunction failed', { operation: 'getFunction', error: getErrorMessage(err), id });
+    return null;
+  })));
   return results.filter((value): value is FunctionKnowledge => Boolean(value));
 }
 
 async function loadModules(storage: LibrarianStorage, ids: string[]): Promise<ModuleKnowledge[]> {
-  const results = await Promise.all(ids.map((id) => storage.getModule(id).catch(() => null)));
+  const results = await Promise.all(ids.map((id) => storage.getModule(id).catch((err) => {
+    logWarning('[scoring] getModule failed', { operation: 'getModule', error: getErrorMessage(err), id });
+    return null;
+  })));
   return results.filter((value): value is ModuleKnowledge => Boolean(value));
 }
 
@@ -241,7 +323,10 @@ async function loadFileKnowledge(
 ): Promise<Map<string, FileKnowledge>> {
   const entries = await Promise.all(
     Array.from(filePaths).map(async (filePath) => {
-      const file = await storage.getFileByPath(filePath).catch(() => null);
+      const file = await storage.getFileByPath(filePath).catch((err) => {
+        logWarning('[scoring] getFileByPath failed', { operation: 'getFileByPath', error: getErrorMessage(err), filePath });
+        return null;
+      });
       return file ? ([filePath, file] as const) : null;
     })
   );
@@ -259,7 +344,10 @@ async function loadOwnership(
 ): Promise<Map<string, string[]>> {
   const entries = await Promise.all(
     Array.from(filePaths).map(async (filePath) => {
-      const owners = await storage.getOwnershipByFilePath(filePath).catch(() => []);
+      const owners = await storage.getOwnershipByFilePath(filePath).catch((err) => {
+        logWarning('[scoring] getOwnershipByFilePath failed', { operation: 'getOwnershipByFilePath', error: getErrorMessage(err), filePath });
+        return [];
+      });
       if (!owners.length) return null;
       const sorted = owners
         .slice()
@@ -283,7 +371,10 @@ async function loadUniversalKnowledge(
   const map: UniversalKnowledgeLookup = new Map();
   const entries = await Promise.all(
     Array.from(filePaths).map(async (filePath) => {
-      const records = await storage.getUniversalKnowledgeByFile(filePath).catch(() => []);
+      const records = await storage.getUniversalKnowledgeByFile(filePath).catch((err) => {
+        logWarning('[scoring] getUniversalKnowledgeByFile failed', { operation: 'getUniversalKnowledgeByFile', error: getErrorMessage(err), filePath });
+        return [];
+      });
       return { filePath, records };
     })
   );
@@ -306,7 +397,10 @@ async function loadEmbeddings(
 ): Promise<Map<string, Float32Array>> {
   const entries = await Promise.all(
     entityIds.map(async (entityId) => {
-      const embedding = await storage.getEmbedding(entityId).catch(() => null);
+      const embedding = await storage.getEmbedding(entityId).catch((err) => {
+        logWarning('[scoring] getEmbedding failed', { operation: 'getEmbedding', error: getErrorMessage(err), entityId });
+        return null;
+      });
       return embedding ? ([entityId, embedding] as const) : null;
     })
   );
@@ -330,13 +424,19 @@ async function buildModuleGraph(
     edgeTypes: ['imports'],
     fromTypes: ['module'],
     toTypes: ['module'],
-  }).catch(() => []);
+  }).catch((err) => {
+    logWarning('[scoring] getGraphEdges (from) failed', { operation: 'getGraphEdges', error: getErrorMessage(err), moduleIds });
+    return [];
+  });
   const edgesTo = await storage.getGraphEdges({
     toIds: moduleIds,
     edgeTypes: ['imports'],
     fromTypes: ['module'],
     toTypes: ['module'],
-  }).catch(() => []);
+  }).catch((err) => {
+    logWarning('[scoring] getGraphEdges (to) failed', { operation: 'getGraphEdges', error: getErrorMessage(err), moduleIds });
+    return [];
+  });
   const relatedModuleIds = new Set<string>();
   for (const edge of edgesFrom) relatedModuleIds.add(edge.toId);
   for (const edge of edgesTo) relatedModuleIds.add(edge.fromId);
@@ -371,7 +471,10 @@ async function computeChangeFrequency(
 ): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   if (!filePaths.size) return map;
-  const commits = await storage.getCommits({ limit: 240, orderBy: 'created_at', orderDirection: 'desc' }).catch(() => []);
+  const commits = await storage.getCommits({ limit: 240, orderBy: 'created_at', orderDirection: 'desc' }).catch((err) => {
+    logWarning('[scoring] getCommits failed', { operation: 'getCommits', error: getErrorMessage(err) });
+    return [];
+  });
   if (!commits.length) return map;
 
   const relativeLookup = new Map<string, string>();
@@ -417,6 +520,62 @@ function normalizePath(value: string): string {
   return value.replace(/\\/g, '/');
 }
 
+/**
+ * Calculate keyword boost for query terms matching entity path/name.
+ * This ensures obvious matches like "bootstrap" -> bootstrap.ts rank highly.
+ *
+ * The boost is a multiplier applied to the combined score:
+ * - 1.5x for exact filename match (e.g., "bootstrap" -> bootstrap.ts)
+ * - 1.3x for filename contains term (e.g., "bootstrap" -> bootstrap_utils.ts)
+ * - 1.15x for path contains term (e.g., "bootstrap" -> src/bootstrap/index.ts)
+ * - 1.0x (no boost) otherwise
+ */
+function computeKeywordBoost(
+  queryTerms: string[],
+  entityPath: string | undefined,
+  entityName: string | undefined
+): number {
+  if (!queryTerms.length) return 1.0;
+
+  const pathLower = (entityPath ?? '').toLowerCase();
+  const nameLower = (entityName ?? '').toLowerCase();
+
+  // Extract filename from path if name not provided
+  const filename = nameLower || (pathLower ? path.basename(pathLower).replace(/\.[^.]+$/, '') : '');
+
+  let bestBoost = 1.0;
+
+  for (const term of queryTerms) {
+    const termLower = term.toLowerCase();
+
+    // Skip very short terms (likely noise)
+    if (termLower.length < 3) continue;
+
+    // Check for exact filename match (highest boost)
+    if (filename === termLower) {
+      bestBoost = Math.max(bestBoost, 1.5);
+      continue;
+    }
+
+    // Check if filename contains the term
+    if (filename.includes(termLower)) {
+      bestBoost = Math.max(bestBoost, 1.3);
+      continue;
+    }
+
+    // Check if path contains the term (as a segment or part of segment)
+    const pathSegments = pathLower.split('/');
+    const hasPathMatch = pathSegments.some(segment =>
+      segment === termLower || segment.includes(termLower)
+    );
+    if (hasPathMatch) {
+      bestBoost = Math.max(bestBoost, 1.15);
+    }
+  }
+
+  return bestBoost;
+}
+
 async function resolveWorkspaceRoot(storage: LibrarianStorage): Promise<string | null> {
   try {
     const metadata = await storage.getMetadata();
@@ -424,4 +583,17 @@ async function resolveWorkspaceRoot(storage: LibrarianStorage): Promise<string |
   } catch {
     return null;
   }
+}
+
+/**
+ * Check if a path is from eval-corpus or external test fixtures.
+ * These should be heavily penalized in query results.
+ */
+export function isEvalCorpusPath(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const normalizedPath = filePath.toLowerCase();
+  return normalizedPath.includes('eval-corpus') ||
+         normalizedPath.includes('external-repos') ||
+         normalizedPath.includes('test/fixtures') ||
+         normalizedPath.includes('test-fixtures');
 }

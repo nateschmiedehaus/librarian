@@ -1380,3 +1380,21 @@ export {
   createTestContent,
   createSimpleInferenceStep,
 } from './inference_auditor.js';
+
+// Result Coherence Analysis (confidence calibration for scattered results)
+export {
+  // Core analysis
+  analyzeResultCoherence,
+  applyCoherenceAdjustment,
+
+  // Constants
+  DEFAULT_COHERENCE_THRESHOLD,
+  DEFAULT_MAX_PENALTY,
+  COHERENCE_WEIGHTS,
+  MIN_RESULTS_FOR_CLUSTERING,
+  RELATED_SIMILARITY_THRESHOLD,
+
+  // Types
+  type CoherenceAnalysis,
+  type CoherenceAnalysisOptions,
+} from './result_coherence.js';

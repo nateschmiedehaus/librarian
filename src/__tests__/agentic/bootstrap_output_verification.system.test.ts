@@ -884,14 +884,14 @@ describeFixtures('Bootstrap Output Verification', () => {
           kind: 'query',
         });
 
-        const similar = await activeStorage.findSimilarByEmbedding(queryResult.embedding, {
+        const searchResponse = await activeStorage.findSimilarByEmbedding(queryResult.embedding, {
           limit: similarityLimit,
           minSimilarity: 0,
           entityTypes: ['function'],
         });
 
         const fileScores = new Map<string, number>();
-        for (const result of similar) {
+        for (const result of searchResponse.results) {
           const fn = functionsById.get(result.entityId);
           if (!fn) continue;
           const current = fileScores.get(fn.filePath);

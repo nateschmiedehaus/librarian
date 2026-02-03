@@ -41,6 +41,7 @@ import { collectEvidence, type EvidenceCollectionInput } from './extractors/evid
 import { extractRelationships, type RelationshipsInput } from './extractors/relationships_extractor.js';
 import { ProviderUnavailableError } from '../api/provider_check.js';
 import type { ActivationSummary, DefeaterCheckContext } from './defeater_activation.js';
+import { withTimeout } from '../utils/async.js';
 
 // ============================================================================
 // GENERATOR TYPES
@@ -76,6 +77,9 @@ export interface KnowledgeGeneratorConfig {
 
   /** Override defeater activation module loading (for testing/mocking) */
   defeaterLoader?: DefeaterActivationLoader;
+
+  /** Progress callback for reporting generation progress */
+  onProgress?: (current: number, total: number, currentItem?: string) => void;
 }
 
 export interface GenerationResult {
@@ -142,7 +146,7 @@ interface ExtractionResults {
 // ============================================================================
 
 export class UniversalKnowledgeGenerator {
-  private readonly config: Required<Omit<KnowledgeGeneratorConfig, 'llmProvider' | 'llmModelId' | 'onEvent' | 'governor'>> & Pick<KnowledgeGeneratorConfig, 'llmProvider' | 'llmModelId' | 'onEvent' | 'governor'>;
+  private readonly config: Required<Omit<KnowledgeGeneratorConfig, 'llmProvider' | 'llmModelId' | 'onEvent' | 'governor' | 'onProgress'>> & Pick<KnowledgeGeneratorConfig, 'llmProvider' | 'llmModelId' | 'onEvent' | 'governor' | 'onProgress'>;
 
   constructor(config: KnowledgeGeneratorConfig) {
     this.config = {
@@ -226,6 +230,7 @@ export class UniversalKnowledgeGenerator {
     const totalEntities = functions.length + modules.length;
     const overallDeadline = this.config.timeoutMs > 0 ? startTime + (this.config.timeoutMs * totalEntities) : Number.POSITIVE_INFINITY;
     let timedOut = false;
+    let processedEntities = 0;
     const checkTimeout = (): boolean => {
       if (timedOut) return true;
       if (Date.now() <= overallDeadline) return false;
@@ -240,7 +245,7 @@ export class UniversalKnowledgeGenerator {
       return true;
     };
 
-    const runConcurrent = async <T>(items: T[], handler: (item: T) => Promise<void>): Promise<void> => {
+    const runConcurrent = async <T>(items: T[], handler: (item: T) => Promise<void>, getItemName?: (item: T) => string): Promise<void> => {
       if (!items.length || checkTimeout()) return;
       const concurrency = Math.max(1, Math.min(this.config.concurrency, items.length));
       let index = 0;
@@ -248,17 +253,21 @@ export class UniversalKnowledgeGenerator {
         while (true) {
           const current = index++;
           if (current >= items.length || checkTimeout()) break;
-          await handler(items[current]);
+          const item = items[current];
+          // Report progress
+          this.config.onProgress?.(processedEntities, totalEntities, getItemName?.(item));
+          await handler(item);
+          processedEntities++;
         }
       }));
     };
 
     await runConcurrent(functions, async (fn) => {
       try {
-        const result = await this.withTimeout(
+        const result = await withTimeout(
           this.generateForFunction(fn),
           this.config.timeoutMs,
-          `Function ${fn.name} in ${fn.filePath}`
+          { context: `Function ${fn.name} in ${fn.filePath}` }
         );
         if (result.success) {
           if (result.partial) {
@@ -280,14 +289,14 @@ export class UniversalKnowledgeGenerator {
           phase: this.classifyErrorPhase(error),
         });
       }
-    });
+    }, (fn) => fn.filePath || fn.name || 'unknown');
 
     await runConcurrent(modules, async (mod) => {
       try {
-        const result = await this.withTimeout(
+        const result = await withTimeout(
           this.generateForModule(mod),
           this.config.timeoutMs,
-          `Module ${mod.path}`
+          { context: `Module ${mod.path}` }
         );
         if (result.success) {
           if (result.partial) {
@@ -309,7 +318,7 @@ export class UniversalKnowledgeGenerator {
           phase: this.classifyErrorPhase(error),
         });
       }
-    });
+    }, (mod) => mod.path || 'unknown');
 
     const durationMs = Date.now() - startTime;
 
@@ -329,34 +338,6 @@ export class UniversalKnowledgeGenerator {
       errors,
       durationMs,
     };
-  }
-
-  /**
-   * Wrap a promise with a timeout.
-   */
-  private async withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    context: string
-  ): Promise<T> {
-    if (!timeoutMs || timeoutMs <= 0) {
-      return promise;
-    }
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(`Timeout after ${timeoutMs}ms: ${context}`));
-      }, timeoutMs);
-    });
-
-    try {
-      const result = await Promise.race([promise, timeoutPromise]);
-      if (timeoutId) clearTimeout(timeoutId);
-      return result;
-    } catch (error) {
-      if (timeoutId) clearTimeout(timeoutId);
-      throw error;
-    }
   }
 
   /**
@@ -968,10 +949,10 @@ export class UniversalKnowledgeGenerator {
           };
           const defeaterTimeoutMs =
             this.config.timeoutMs > 0 ? this.config.timeoutMs : DEFAULT_DEFEATER_TIMEOUT_MS;
-          const defeaterSummary = await this.withTimeout(
+          const defeaterSummary = await withTimeout(
             checkDefeaters(knowledge.meta, defeaterContext),
             defeaterTimeoutMs,
-            `Defeater activation for ${knowledge.id}`
+            { context: `Defeater activation for ${knowledge.id}` }
           );
           if (!isActivationSummary(defeaterSummary)) {
             throw new Error('unverified_by_trace(defeater_summary_invalid)');
@@ -1337,10 +1318,10 @@ export class UniversalKnowledgeGenerator {
           };
           const defeaterTimeoutMs =
             this.config.timeoutMs > 0 ? this.config.timeoutMs : DEFAULT_DEFEATER_TIMEOUT_MS;
-          const defeaterSummary = await this.withTimeout(
+          const defeaterSummary = await withTimeout(
             checkDefeaters(knowledge.meta, defeaterContext),
             defeaterTimeoutMs,
-            `Defeater activation for ${id}`
+            { context: `Defeater activation for ${id}` }
           );
           if (!isActivationSummary(defeaterSummary)) {
             throw new Error('unverified_by_trace(defeater_summary_invalid)');

@@ -119,3 +119,57 @@ export type {
 // Bootstrap Tests (WU-BOOT-002)
 export { createBootstrapTestRunner } from './bootstrap_tests.js';
 export type { BootstrapTestResult, BootstrapTestRunner } from './bootstrap_tests.js';
+
+// Agent Hooks - Automatic integration for any AI agent
+export {
+  // Primary API
+  getTaskContext,
+  getContext,
+  reportTaskOutcome,
+  executeWithContext,
+  // File monitoring
+  startFileMonitoring,
+  stopFileMonitoring,
+  withFileMonitoring,
+  // Hook creators
+  createPreTaskHook,
+  createPostTaskHook,
+  createAgentHooks,
+  // Detection helpers
+  isLibrarianAvailable,
+  detectWorkspace,
+} from './agent_hooks.js';
+export type {
+  TaskContextRequest,
+  TaskContext,
+  TaskOutcome,
+  AgentHookConfig,
+} from './agent_hooks.js';
+
+// Automatic Feedback Loop for Calibration
+export {
+  FeedbackLoop,
+  createFeedbackLoop,
+  initFeedbackLoop,
+  getFeedbackLoop,
+  recordOutcome,
+  startTask,
+  recordSignal,
+  analyzeBias,
+  inferOutcomeFromToolOutput,
+  // Auto-wired feedback loop
+  createAutoWiredFeedbackLoop,
+  initAutoWiredFeedbackLoop,
+} from './feedback_loop.js';
+export type {
+  TaskOutcome as FeedbackTaskOutcome,
+  CompletionSignal,
+  FeedbackLoopConfig,
+  BiasAnalysis,
+  // Auto-wired types
+  FileWatcherSignal,
+  TestRunnerSignal,
+  FeedbackSignal,
+  WirableFileWatcher,
+  AutoWiredFeedbackLoopHandle,
+} from './feedback_loop.js';

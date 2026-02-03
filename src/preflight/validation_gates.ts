@@ -562,6 +562,128 @@ const gateSemanticIndexingComplete: ValidationGateFn = async (ctx) => {
 };
 
 /**
+ * Postcondition: Zero-file indexing check
+ *
+ * FATAL POLICY: This gate catches the critical case where patterns are wrong.
+ * When files exist in the workspace but 0 were indexed, it indicates
+ * misconfigured include patterns - this should fail loudly rather than
+ * silently succeeding with an empty index.
+ */
+const gateSemanticIndexingZeroFilesCheck: ValidationGateFn = async (ctx) => {
+  const result = ctx.phaseResult;
+  if (!result) {
+    return {
+      passed: true,
+      gateId: 'semantic_indexing_zero_files_check',
+      phase: 'semantic_indexing',
+      type: 'postcondition',
+      message: 'No phase result available - skipping zero-file check',
+      fatal: false,
+    };
+  }
+
+  // Get actual files that could be indexed from the filesystem
+  const totalFilesDiscovered = result.metrics?.totalFiles ?? 0;
+  const filesIndexed = result.itemsProcessed ?? 0;
+
+  // CRITICAL: Files discovered but nothing indexed = broken patterns
+  if (totalFilesDiscovered > 0 && filesIndexed === 0) {
+    logError('CRITICAL: Files discovered but 0 indexed - check include patterns', {
+      context: 'validation_gates',
+      totalFilesDiscovered,
+      filesIndexed,
+      includePatterns: ctx.config.include?.slice(0, 5), // Show first 5 patterns
+    });
+    return {
+      passed: false,
+      gateId: 'semantic_indexing_zero_files_check',
+      phase: 'semantic_indexing',
+      type: 'postcondition',
+      message: `CRITICAL: ${totalFilesDiscovered} files discovered in workspace but 0 were indexed. Include patterns may not match any parseable files.`,
+      suggestedFix: 'Verify include patterns match actual source files (e.g., "src/**/*.ts" not "src/nonexistent/**/*"). Run with --verbose to see which patterns match.',
+      fatal: true,
+      metrics: {
+        totalFilesDiscovered,
+        filesIndexed: 0,
+        patternMismatch: 1,
+      },
+    };
+  }
+
+  // Also check: if patterns explicitly provided but match nothing
+  if (ctx.config.include && ctx.config.include.length > 0 && filesIndexed === 0) {
+    // Check if patterns actually match anything
+    try {
+      const discovered = await glob(ctx.config.include, {
+        cwd: ctx.workspace,
+        ignore: ctx.config.exclude ?? [],
+        nodir: true,
+        follow: false,
+      });
+
+      if (discovered.length > 0) {
+        // Patterns match files but nothing was indexed - likely file type issue
+        logWarning('Include patterns match files but none were indexed', {
+          context: 'validation_gates',
+          matchedFiles: discovered.length,
+          sampleFiles: discovered.slice(0, 3),
+        });
+        return {
+          passed: false,
+          gateId: 'semantic_indexing_zero_files_check',
+          phase: 'semantic_indexing',
+          type: 'postcondition',
+          message: `Include patterns match ${discovered.length} files but 0 were indexed. Check if file types are supported.`,
+          suggestedFix: 'Ensure files have supported extensions (.ts, .js, .tsx, .jsx, .md) and are not binary files.',
+          fatal: true,
+          metrics: {
+            matchedFiles: discovered.length,
+            filesIndexed: 0,
+          },
+        };
+      } else if (discovered.length === 0) {
+        // Patterns don't match anything
+        logError('Include patterns match no files', {
+          context: 'validation_gates',
+          patterns: ctx.config.include,
+        });
+        return {
+          passed: false,
+          gateId: 'semantic_indexing_zero_files_check',
+          phase: 'semantic_indexing',
+          type: 'postcondition',
+          message: `Include patterns [${ctx.config.include.slice(0, 3).join(', ')}${ctx.config.include.length > 3 ? '...' : ''}] match no files in workspace.`,
+          suggestedFix: 'Check that include patterns match actual files. Use glob syntax like "src/**/*.ts" and verify paths exist.',
+          fatal: true,
+          metrics: {
+            patternsCount: ctx.config.include.length,
+            matchedFiles: 0,
+          },
+        };
+      }
+    } catch (error) {
+      // Glob failed - log but don't fail the gate
+      logWarning('Failed to check include patterns', {
+        context: 'validation_gates',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    passed: true,
+    gateId: 'semantic_indexing_zero_files_check',
+    phase: 'semantic_indexing',
+    type: 'postcondition',
+    message: `Zero-file check passed: ${filesIndexed} files indexed`,
+    fatal: false,
+    metrics: {
+      filesIndexed,
+    },
+  };
+};
+
+/**
  * Postcondition: Relationship mapping should create edges
  */
 const gateRelationshipMappingComplete: ValidationGateFn = async (ctx) => {
@@ -708,7 +830,7 @@ const PRECONDITION_GATES: Map<BootstrapPhaseName, ValidationGateFn[]> = new Map(
  */
 const POSTCONDITION_GATES: Map<BootstrapPhaseName, ValidationGateFn[]> = new Map([
   ['structural_scan', [gateStructuralScanComplete]],
-  ['semantic_indexing', [gateSemanticIndexingComplete]],
+  ['semantic_indexing', [gateSemanticIndexingComplete, gateSemanticIndexingZeroFilesCheck]],
   ['relationship_mapping', [gateRelationshipMappingComplete]],
   ['context_pack_generation', [gateContextPackComplete]],
   ['knowledge_generation', [gateKnowledgeGenerationComplete]],

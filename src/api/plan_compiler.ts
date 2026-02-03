@@ -1291,6 +1291,12 @@ const PACK_TYPE_TO_ENTITY_TYPE: Record<ContextPackType, WorkEntityReference['typ
   decision_context: 'decision',
   change_impact: 'change',
   similar_tasks: 'similar_task',
+  doc_context: 'module', // Documentation treated as module-level for work entities
+  project_understanding: 'module', // Project-level understanding treated as module-level
+  symbol_definition: 'function', // Symbol definitions map to function (most common case)
+  enumeration_result: 'module', // Enumeration results are module-level entity lists
+  git_history: 'change', // Git history maps to change type for work entities
+  call_flow: 'function', // Call flow traces map to function type
 };
 
 const TOOL_SUGGESTION_RULES: Array<{

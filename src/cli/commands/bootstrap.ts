@@ -37,7 +37,7 @@ export async function bootstrapCommand(options: BootstrapCommandOptions): Promis
       'force-resume': { type: 'boolean', default: false },
       timeout: { type: 'string', default: '0' },
       scope: { type: 'string', default: 'full' },
-      mode: { type: 'string', default: 'fast' },
+      mode: { type: 'string', default: 'full' },
       'llm-provider': { type: 'string' },
       'llm-model': { type: 'string' },
     },
@@ -49,7 +49,7 @@ export async function bootstrapCommand(options: BootstrapCommandOptions): Promis
   const forceResume = values['force-resume'] as boolean;
   const timeoutMs = parseInt(values.timeout as string, 10);
   const scope = typeof values.scope === 'string' ? values.scope.toLowerCase() : 'full';
-  const bootstrapModeRaw = typeof values.mode === 'string' ? values.mode.toLowerCase().trim() : 'fast';
+  const bootstrapModeRaw = typeof values.mode === 'string' ? values.mode.toLowerCase().trim() : 'full';
   const bootstrapMode = bootstrapModeRaw === 'full' || bootstrapModeRaw === 'fast'
     ? bootstrapModeRaw
     : (() => { throw createError('INVALID_ARGUMENT', `Unknown mode "${bootstrapModeRaw}" (use "fast" or "full")`); })();
@@ -199,7 +199,7 @@ export async function bootstrapCommand(options: BootstrapCommandOptions): Promis
       ...resolveScopeOverrides(scope),
       forceReindex: force,
       forceResume,
-      progressCallback: (phase: BootstrapPhase, progress: number) => {
+      progressCallback: (phase: BootstrapPhase, progress: number, details?: { total?: number; current?: number; currentFile?: string }) => {
         const phaseIndex = BOOTSTRAP_PHASES.findIndex((p) => p.name === phase.name);
         if (phaseIndex !== currentPhaseIndex) {
           // New phase started
@@ -209,18 +209,28 @@ export async function bootstrapCommand(options: BootstrapCommandOptions): Promis
           currentPhaseIndex = phaseIndex;
           console.log(`\n[${phaseIndex + 1}/${BOOTSTRAP_PHASES.length}] ${phase.description}`);
 
-          // Create progress bar for indexing phase
-          if (phase.name === 'semantic_indexing') {
-            phaseProgressBar = createProgressBar({
-              total: 100,
-              format: '{bar} {percentage}% | {task} | ETA: {eta_formatted}',
-            });
-          }
+          // Create progress bar for phases that report detailed progress
+          const initialTotal = details?.total ?? 100;
+          phaseProgressBar = createProgressBar({
+            total: initialTotal,
+            format: '[{bar}] {percentage}% | {value}/{total} | {task}',
+          });
         }
 
-        // Update progress bar
-        if (phaseProgressBar && phase.name === 'semantic_indexing') {
-          phaseProgressBar.update(Math.round(progress * 100), { task: 'Indexing files' });
+        // Update progress bar with detailed information
+        if (phaseProgressBar) {
+          if (details?.total !== undefined && details.total > 0) {
+            phaseProgressBar.setTotal(details.total);
+            const currentValue = details.current ?? Math.round(progress * details.total);
+            const percentage = Math.round((currentValue / details.total) * 100);
+            const fileName = details.currentFile
+              ? details.currentFile.split('/').slice(-2).join('/')
+              : phase.description;
+            phaseProgressBar.update(currentValue, { task: fileName.slice(0, 40) });
+          } else {
+            // Fallback to percentage-based progress
+            phaseProgressBar.update(Math.round(progress * 100), { task: phase.description });
+          }
         }
       },
     });
@@ -286,14 +296,56 @@ function resolveScopeOverrides(scope: string): Partial<BootstrapConfig> {
   if (scope === 'librarian') {
     return {
       include: [
-        'src/librarian/**/*',
-        'docs/librarian/**/*',
-        'docs/AGENTS.md',
-        'docs/TEST.md',
-        'docs/LIVE_PROVIDERS_PLAYBOOK.md',
-        'docs/librarian-integration.md',
-        'docs/AUTHENTICATION.md',
-        'src/EMBEDDING_RULES.md',
+        // Actual Librarian source directories
+        'src/api/**/*.ts',
+        'src/agents/**/*.ts',
+        'src/cli/**/*.ts',
+        'src/config/**/*.ts',
+        'src/knowledge/**/*.ts',
+        'src/storage/**/*.ts',
+        'src/ingest/**/*.ts',
+        'src/preflight/**/*.ts',
+        'src/utils/**/*.ts',
+        'src/graphs/**/*.ts',
+        'src/strategic/**/*.ts',
+        'src/epistemics/**/*.ts',
+        'src/bootstrap/**/*.ts',
+        'src/metrics/**/*.ts',
+        'src/core/**/*.ts',
+        'src/analysis/**/*.ts',
+        'src/adapters/**/*.ts',
+        'src/engines/**/*.ts',
+        'src/evolution/**/*.ts',
+        'src/federation/**/*.ts',
+        'src/guidance/**/*.ts',
+        'src/homeostasis/**/*.ts',
+        'src/integration/**/*.ts',
+        'src/integrations/**/*.ts',
+        'src/learning/**/*.ts',
+        'src/mcp/**/*.ts',
+        'src/measurement/**/*.ts',
+        'src/methods/**/*.ts',
+        'src/migrations/**/*.ts',
+        'src/orchestrator/**/*.ts',
+        'src/providers/**/*.ts',
+        'src/quality/**/*.ts',
+        'src/query/**/*.ts',
+        'src/recommendations/**/*.ts',
+        'src/security/**/*.ts',
+        'src/skills/**/*.ts',
+        'src/spine/**/*.ts',
+        'src/state/**/*.ts',
+        'src/telemetry/**/*.ts',
+        'src/constructions/**/*.ts',
+        'src/types.ts',
+        'src/index.ts',
+        'src/events.ts',
+        'src/universal_patterns.ts',
+        // Tests
+        'src/__tests__/**/*.ts',
+        // Docs (correct paths - at repo root, not docs/)
+        'AGENTS.md',
+        'docs/**/*.md',
       ],
       exclude: [...EXCLUDE_PATTERNS],
     };

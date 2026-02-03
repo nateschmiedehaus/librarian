@@ -44,3 +44,25 @@ export type { MarkedJsonResult } from './marked_json.js';
 
 export { HallucinationDetector, getHallucinationDetector } from './hallucination_detector.js';
 export type { HallucinationCheck, HallucinationResult } from './hallucination_detector.js';
+
+export { withTimeout, TimeoutError } from './async.js';
+export type { WithTimeoutOptions } from './async.js';
+
+export {
+  QueryBatcher,
+  RateLimiter,
+  QueryController,
+  getDefaultBatcher,
+  getDefaultRateLimiter,
+  resetDefaults,
+} from './query_batcher.js';
+export type {
+  QueryBatcherOptions,
+  BatchedQueryResult,
+  BatcherStats,
+  RateLimiterOptions,
+  RateLimiterStats,
+} from './query_batcher.js';
+
+export { computeChecksum16 } from './checksums.js';
+export { computeContentHash } from '../storage/content_cache.js';

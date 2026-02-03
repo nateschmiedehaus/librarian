@@ -3,7 +3,7 @@
  *
  * Shows current Librarian health status using the observability module.
  *
- * Usage: librarian health [--verbose]
+ * Usage: librarian health [--verbose] [--completeness]
  *
  * @packageDocumentation
  */
@@ -16,15 +16,22 @@ import {
   exportPrometheusMetrics,
   type LibrarianStateReport,
 } from '../../measurement/observability.js';
+import {
+  calculateIndexCompleteness,
+  formatCompletenessReport,
+  exportPrometheusMetrics as exportCompletenessPrometheus,
+  type IndexCompletenessReport,
+} from '../../metrics/index_completeness.js';
 
 interface HealthOptions {
   workspace: string;
   verbose?: boolean;
   format?: 'text' | 'json' | 'prometheus';
+  completeness?: boolean;
 }
 
 export async function healthCommand(options: HealthOptions): Promise<void> {
-  const { workspace, verbose = false, format = 'text' } = options;
+  const { workspace, verbose = false, format = 'text', completeness = false } = options;
 
   // Initialize storage
   const dbPath = await resolveDbPath(workspace);
@@ -32,6 +39,18 @@ export async function healthCommand(options: HealthOptions): Promise<void> {
   await storage.initialize();
 
   try {
+    // If completeness flag is set, show completeness report instead
+    if (completeness) {
+      const completenessReport = await calculateIndexCompleteness(workspace, storage);
+      outputCompletenessReport(completenessReport, format, verbose);
+
+      // Exit code based on completeness
+      if (completenessReport.completeness < 0.8) {
+        process.exitCode = 1;
+      }
+      return;
+    }
+
     // Generate state report
     const report = await generateStateReport(storage);
 
@@ -57,6 +76,38 @@ export async function healthCommand(options: HealthOptions): Promise<void> {
     }
   } finally {
     await storage.close();
+  }
+}
+
+function outputCompletenessReport(
+  report: IndexCompletenessReport,
+  format: 'text' | 'json' | 'prometheus',
+  verbose: boolean
+): void {
+  switch (format) {
+    case 'json':
+      // Convert Date objects to ISO strings for JSON serialization
+      const jsonReport = {
+        ...report,
+        lastIndexTime: report.lastIndexTime?.toISOString() ?? null,
+        generatedAt: report.generatedAt.toISOString(),
+        staleFiles: report.staleFiles.map(f => ({
+          ...f,
+          indexedAt: f.indexedAt.toISOString(),
+          modifiedAt: f.modifiedAt.toISOString(),
+        })),
+      };
+      console.log(JSON.stringify(jsonReport, null, 2));
+      break;
+
+    case 'prometheus':
+      console.log(exportCompletenessPrometheus(report));
+      break;
+
+    case 'text':
+    default:
+      console.log(formatCompletenessReport(report, verbose));
+      break;
   }
 }
 

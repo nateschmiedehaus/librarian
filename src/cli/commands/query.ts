@@ -4,10 +4,22 @@ import { resolveDbPath } from '../db_path.js';
 import { createSqliteStorage } from '../../storage/sqlite_storage.js';
 import { queryLibrarian } from '../../api/query.js';
 import { isBootstrapRequired } from '../../api/bootstrap.js';
-import type { LibrarianQuery } from '../../types.js';
+import { detectLibrarianVersion } from '../../api/versioning.js';
+import type { LibrarianQuery, TokenBudget } from '../../types.js';
 import { createError, suggestSimilarQueries } from '../errors.js';
 import { createSpinner, formatDuration, printKeyValue } from '../progress.js';
 import { safeJsonParse } from '../../utils/safe_json.js';
+import {
+  parseStructuralQueryIntent,
+  executeExhaustiveDependencyQuery,
+  shouldUseExhaustiveMode,
+} from '../../api/dependency_query.js';
+import {
+  detectEnumerationIntent,
+  shouldUseEnumerationMode,
+  enumerateByCategory,
+  formatEnumerationResult,
+} from '../../constructions/enumeration.js';
 
 export interface QueryCommandOptions {
   workspace: string;
@@ -27,12 +39,22 @@ export async function queryCommand(options: QueryCommandOptions): Promise<void> 
       timeout: { type: 'string', default: '0' },
       json: { type: 'boolean', default: false },
       'no-synthesis': { type: 'boolean', default: false },
+      deterministic: { type: 'boolean', default: false },
       'llm-provider': { type: 'string' },
       'llm-model': { type: 'string' },
       uc: { type: 'string' },
       'uc-priority': { type: 'string' },
       'uc-evidence': { type: 'string' },
       'uc-freshness-days': { type: 'string' },
+      'token-budget': { type: 'string' },
+      'token-reserve': { type: 'string' },
+      'token-priority': { type: 'string' },
+      // Exhaustive mode flags
+      exhaustive: { type: 'boolean', default: false },
+      transitive: { type: 'boolean', default: false },
+      'max-depth': { type: 'string', default: '10' },
+      // Enumeration mode flag
+      enumerate: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -56,6 +78,7 @@ export async function queryCommand(options: QueryCommandOptions): Promise<void> 
   }
   const outputJson = values.json as boolean;
   const noSynthesis = values['no-synthesis'] as boolean;
+  const deterministic = values.deterministic as boolean;
   const requestedLlmProviderRaw = typeof values['llm-provider'] === 'string' ? values['llm-provider'].trim() : '';
   const requestedLlmProvider = (requestedLlmProviderRaw === 'claude' || requestedLlmProviderRaw === 'codex') ? requestedLlmProviderRaw : undefined;
   const requestedLlmModel = typeof values['llm-model'] === 'string' ? values['llm-model'].trim() : undefined;
@@ -66,16 +89,225 @@ export async function queryCommand(options: QueryCommandOptions): Promise<void> 
   const ucFreshnessDays = typeof values['uc-freshness-days'] === 'string'
     ? Number.parseInt(values['uc-freshness-days'], 10)
     : undefined;
+
+  // Token budget configuration
+  const tokenBudgetRaw = typeof values['token-budget'] === 'string' ? values['token-budget'] : '';
+  const tokenBudgetMax = tokenBudgetRaw ? Number.parseInt(tokenBudgetRaw, 10) : undefined;
+  const tokenReserveRaw = typeof values['token-reserve'] === 'string' ? values['token-reserve'] : '';
+  const tokenReserve = tokenReserveRaw ? Number.parseInt(tokenReserveRaw, 10) : undefined;
+  const tokenPriorityRaw = typeof values['token-priority'] === 'string' ? values['token-priority'] : '';
+  const tokenPriority = (tokenPriorityRaw === 'relevance' || tokenPriorityRaw === 'recency' || tokenPriorityRaw === 'diversity')
+    ? tokenPriorityRaw
+    : undefined;
+
+  // Build token budget if specified
+  let tokenBudget: TokenBudget | undefined;
+  if (tokenBudgetMax && Number.isFinite(tokenBudgetMax) && tokenBudgetMax > 0) {
+    tokenBudget = {
+      maxTokens: tokenBudgetMax,
+      reserveTokens: Number.isFinite(tokenReserve ?? NaN) ? tokenReserve : undefined,
+      priority: tokenPriority,
+    };
+  }
+
+  // Exhaustive mode options
+  const explicitExhaustive = values.exhaustive as boolean;
+  const includeTransitive = values.transitive as boolean;
+  const maxDepthRaw = typeof values['max-depth'] === 'string' ? values['max-depth'] : '10';
+  const maxDepth = parseInt(maxDepthRaw, 10);
+
+  // Enumeration mode option
+  const explicitEnumerate = values.enumerate as boolean;
+
   // Initialize storage
   const dbPath = await resolveDbPath(workspace);
   const storage = createSqliteStorage(dbPath, workspace);
   await storage.initialize();
   try {
-    // Check if bootstrapped
-    const bootstrapCheck = await isBootstrapRequired(workspace, storage);
+    // Check if bootstrapped - detect current tier and use that as target
+    // This allows operation on existing data without requiring upgrade
+    const currentVersion = await detectLibrarianVersion(storage);
+    const effectiveTier = currentVersion?.qualityTier ?? 'full';
+    const bootstrapCheck = await isBootstrapRequired(workspace, storage, { targetQualityTier: effectiveTier });
     if (bootstrapCheck.required) {
       throw createError('NOT_BOOTSTRAPPED', bootstrapCheck.reason);
     }
+
+    // Check if this is an enumeration query (explicit flag or auto-detected)
+    const enumerationIntent = detectEnumerationIntent(intent);
+    const useEnumeration = explicitEnumerate || (enumerationIntent.isEnumeration && enumerationIntent.confidence >= 0.7);
+
+    if (useEnumeration && enumerationIntent.category) {
+      // Run enumeration query - returns COMPLETE lists instead of top-k
+      const enumSpinner = createSpinner(`Enumerating ${enumerationIntent.category}: "${intent.substring(0, 50)}${intent.length > 50 ? '...' : ''}"`);
+
+      try {
+        const startTime = Date.now();
+        const result = await enumerateByCategory(storage, enumerationIntent.category, workspace);
+        const elapsed = Date.now() - startTime;
+
+        enumSpinner.succeed(`Enumeration completed in ${formatDuration(elapsed)}`);
+
+        if (outputJson) {
+          console.log(JSON.stringify({
+            mode: 'enumeration',
+            intent: enumerationIntent,
+            category: result.category,
+            totalCount: result.totalCount,
+            truncated: result.truncated,
+            explanation: result.explanation,
+            entities: result.entities.map(e => ({
+              id: e.id,
+              name: e.name,
+              filePath: e.filePath,
+              description: e.description,
+              line: e.line,
+              metadata: e.metadata,
+            })),
+            byDirectory: Object.fromEntries(
+              Array.from(result.byDirectory.entries()).map(([dir, entities]) => [
+                dir,
+                entities.map(e => e.name),
+              ])
+            ),
+            durationMs: elapsed,
+          }, null, 2));
+          return;
+        }
+
+        // Use the built-in formatter for text output
+        console.log(formatEnumerationResult(result));
+        console.log();
+        return;
+      } catch (error) {
+        enumSpinner.fail('Enumeration query failed');
+        throw error;
+      }
+    }
+
+    // Check if this is an exhaustive query (explicit flag or auto-detected)
+    const autoDetectExhaustive = shouldUseExhaustiveMode(intent);
+    const useExhaustive = explicitExhaustive || autoDetectExhaustive;
+
+    if (useExhaustive) {
+      // Run exhaustive dependency query instead of semantic query
+      const exhaustiveSpinner = createSpinner(`Running exhaustive dependency query: "${intent.substring(0, 50)}${intent.length > 50 ? '...' : ''}"`);
+
+      const structuralIntent = parseStructuralQueryIntent(intent);
+
+      if (!structuralIntent.isStructural || !structuralIntent.targetEntity) {
+        exhaustiveSpinner.fail('Could not parse structural query intent');
+        throw createError('INVALID_ARGUMENT',
+          'Exhaustive mode requires a structural query like "what depends on X" or "what imports Y". ' +
+          'Specify a target entity in your query or use the standard semantic search without --exhaustive.'
+        );
+      }
+
+      try {
+        const startTime = Date.now();
+        const result = await executeExhaustiveDependencyQuery(storage, structuralIntent, {
+          includeTransitive,
+          maxDepth,
+          onProgress: (count) => {
+            if (count % 50 === 0) {
+              exhaustiveSpinner.update(`Found ${count} dependents...`);
+            }
+          },
+        });
+        const elapsed = Date.now() - startTime;
+
+        exhaustiveSpinner.succeed(`Exhaustive query completed in ${formatDuration(elapsed)}`);
+
+        if (outputJson) {
+          console.log(JSON.stringify({
+            mode: 'exhaustive',
+            intent: structuralIntent,
+            targetResolution: result.targetResolution,
+            totalCount: result.results.length,
+            directCount: result.results.filter(r => r.depth === 1).length,
+            transitiveCount: result.transitiveCount,
+            explanation: result.explanation,
+            files: result.results.map(r => ({
+              path: r.sourceFile || r.entityId,
+              type: r.entityType,
+              edgeType: r.edgeType,
+              depth: r.depth,
+              line: r.sourceLine,
+            })),
+            durationMs: elapsed,
+          }, null, 2));
+          return;
+        }
+
+        console.log('\n=== Exhaustive Dependency Query Results ===\n');
+        console.log(result.explanation);
+        console.log();
+
+        printKeyValue([
+          { key: 'Target', value: result.targetResolution.resolvedPath ?? structuralIntent.targetEntity ?? 'unknown' },
+          { key: 'Direction', value: structuralIntent.direction === 'dependents' ? 'What depends on this' : 'What this depends on' },
+          { key: 'Edge Types', value: structuralIntent.edgeTypes.join(', ') },
+          { key: 'Total Found', value: result.results.length },
+          { key: 'Direct', value: result.results.filter(r => r.depth === 1).length },
+          { key: 'Transitive', value: result.transitiveCount },
+          { key: 'Duration', value: `${elapsed}ms` },
+        ]);
+        console.log();
+
+        if (result.results.length > 0) {
+          // Group by directory for better readability
+          const byDir = new Map<string, typeof result.results>();
+          for (const dep of result.results) {
+            const filePath = dep.sourceFile || dep.entityId;
+            const dir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '.';
+            if (!byDir.has(dir)) {
+              byDir.set(dir, []);
+            }
+            byDir.get(dir)!.push(dep);
+          }
+
+          // Sort directories by count (descending)
+          const sortedDirs = Array.from(byDir.entries())
+            .sort((a, b) => b[1].length - a[1].length);
+
+          console.log('Files by Directory:');
+          console.log('-'.repeat(60));
+
+          for (const [dir, deps] of sortedDirs.slice(0, 30)) {
+            console.log(`\n  ${dir}/ (${deps.length} files)`);
+            for (const dep of deps.slice(0, 10)) {
+              const fileName = (dep.sourceFile || dep.entityId).split('/').pop();
+              const depthNote = (dep.depth ?? 1) > 1 ? ` [depth=${dep.depth}]` : '';
+              const lineNote = dep.sourceLine ? `:${dep.sourceLine}` : '';
+              console.log(`    - ${fileName}${lineNote}${depthNote}`);
+            }
+            if (deps.length > 10) {
+              console.log(`    ... and ${deps.length - 10} more`);
+            }
+          }
+
+          if (sortedDirs.length > 30) {
+            console.log(`\n  ... and ${sortedDirs.length - 30} more directories`);
+          }
+
+          console.log('\n' + '-'.repeat(60));
+          console.log(`\nComplete file list (${result.results.length} total):`);
+
+          // Print all files as a simple list
+          for (const dep of result.results) {
+            const filePath = dep.sourceFile || dep.entityId;
+            console.log(`  ${filePath}`);
+          }
+        }
+
+        console.log();
+        return;
+      } catch (error) {
+        exhaustiveSpinner.fail('Exhaustive query failed');
+        throw error;
+      }
+    }
+
     const spinner = createSpinner(`Querying: "${intent.substring(0, 50)}${intent.length > 50 ? '...' : ''}"`);
     let resolvedProvider = requestedLlmProvider;
     let resolvedModel = requestedLlmModel;
@@ -108,6 +340,8 @@ export async function queryCommand(options: QueryCommandOptions): Promise<void> 
         freshnessMaxDays: Number.isFinite(ucFreshnessDays ?? NaN) ? ucFreshnessDays : undefined,
       } : undefined,
       llmRequirement: noSynthesis ? 'disabled' : undefined,
+      tokenBudget,
+      deterministic,
     };
     try {
       const startTime = Date.now();
@@ -124,7 +358,7 @@ export async function queryCommand(options: QueryCommandOptions): Promise<void> 
       console.log('\nQuery Results:');
       console.log('==============\n');
 
-      printKeyValue([
+      const keyValues = [
         { key: 'Intent', value: intent },
         { key: 'Depth', value: depth },
         { key: 'Affected Files', value: affectedFiles?.join(', ') || 'None specified' },
@@ -133,7 +367,14 @@ export async function queryCommand(options: QueryCommandOptions): Promise<void> 
         { key: 'Cache Hit', value: response.cacheHit },
         { key: 'Latency', value: `${response.latencyMs}ms` },
         { key: 'Packs Found', value: response.packs.length },
-      ]);
+      ];
+      if (deterministic) {
+        keyValues.push({ key: 'Deterministic Mode', value: 'enabled (LLM synthesis skipped, stable sorting applied)' });
+      }
+      if (tokenBudget) {
+        keyValues.push({ key: 'Token Budget', value: `${tokenBudget.maxTokens}${tokenBudget.reserveTokens ? ` (reserve: ${tokenBudget.reserveTokens})` : ''}` });
+      }
+      printKeyValue(keyValues);
       console.log();
 
       if (response.explanation) {
@@ -212,6 +453,24 @@ export async function queryCommand(options: QueryCommandOptions): Promise<void> 
           { key: 'Entropy', value: response.uncertainty.entropy.toFixed(3) },
           { key: 'Variance', value: response.uncertainty.variance.toFixed(3) },
         ]);
+        console.log();
+      }
+
+      if (response.tokenBudgetResult) {
+        console.log('Token Budget:');
+        const tbr = response.tokenBudgetResult;
+        printKeyValue([
+          { key: 'Truncated', value: tbr.truncated },
+          { key: 'Tokens Used', value: tbr.tokensUsed },
+          { key: 'Total Available', value: tbr.totalAvailable },
+          { key: 'Strategy', value: tbr.truncationStrategy },
+          { key: 'Original Packs', value: tbr.originalPackCount ?? 'N/A' },
+          { key: 'Final Packs', value: tbr.finalPackCount ?? 'N/A' },
+        ]);
+        if (tbr.trimmedFields && tbr.trimmedFields.length > 0) {
+          console.log(`  Trimmed Fields: ${tbr.trimmedFields.join(', ')}`);
+        }
+        console.log();
       }
 
     } catch (error) {
